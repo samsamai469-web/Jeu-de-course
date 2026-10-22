@@ -56,6 +56,9 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
+      - name: Force landscape orientation
+        run: sed -i 's/<activity/<activity android:screenOrientation="sensorLandscape"/' android/app/src/main/AndroidManifest.xml
+
       - name: Synchronize Android
         run: npx cap sync android
 
