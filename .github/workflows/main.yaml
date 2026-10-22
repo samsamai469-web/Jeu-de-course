@@ -49,7 +49,9 @@ jobs:
         run: npm install @capacitor/core@^7 @capacitor/cli@^7 @capacitor/android@^7 --legacy-peer-deps
 
       - name: Configure Capacitor
-        run: npx cap init "Sam Care" "com.samcare.app" --web-dir dist
+        run: |
+          rm -f capacitor.config.ts
+          echo '{"appId":"com.samcare.app","appName":"Sam Care","webDir":"dist"}' > capacitor.config.json
 
       - name: Add Android platform
         run: npx cap add android
