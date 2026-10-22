@@ -185,7 +185,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     const resolveQualityTier = (preset: GameSettings['quality']): 'high' | 'medium' | 'low' => {
       if (preset !== 'auto') return preset;
       if (isSoftwareGl) return 'low';
-      if (isMobileDevice) return 'medium';
+      if (isMobileDevice) return 'low';
       return 'high';
     };
 
@@ -199,7 +199,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.4;
 
-    const maxPixelRatio = isSoftwareGl ? 1 : activeQualityTier === 'low' ? 1 : activeQualityTier === 'medium' ? 1.5 : 2;
+    const maxPixelRatio = isSoftwareGl || isMobileDevice ? 1 : activeQualityTier === 'low' ? 1 : activeQualityTier === 'medium' ? 1.5 : 2;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
     renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
     renderer.shadowMap.enabled = !isSoftwareGl && activeQualityTier !== 'low';
