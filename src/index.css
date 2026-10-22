@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #020617;
+    color: #f8fafc;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+.font-display {
+  font-family: 'Chakra Petch', sans-serif;
+}
+
+.font-mono-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}

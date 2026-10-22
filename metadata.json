@@ -1,0 +1,6 @@
+{
+  "name": "Apex Horizon 3D Racing",
+  "description": "Jeu de course automobile 3D réaliste et immersif avec circuits urbains et côtiers, personnalisation au garage, adversaires IA et commandes fluides sur mobile et PC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
