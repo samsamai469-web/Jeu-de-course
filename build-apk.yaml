@@ -1,0 +1,103 @@
+name: Build Sam Care APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Generate Sam Care APK
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # Évite l'installation du paquet obsolète "tools" (cause de l'erreur)
+          packages: ''
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+
+          yes | sdkmanager --licenses || true
+
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+
+      - name: Install Node dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build web application
+        run: npm run build -- --base=./
+
+      - name: Install Capacitor
+        run: npm install @capacitor/core@^7 @capacitor/cli@^7 @capacitor/android@^7 --legacy-peer-deps
+
+      - name: Configure Capacitor
+        shell: bash
+        run: |
+          if [ ! -f capacitor.config.json ] && \
+             [ ! -f capacitor.config.ts ] && \
+             [ ! -f capacitor.config.js ]; then
+            npx cap init "Sam Care" "com.samcare.app" --web-dir dist
+          fi
+
+      - name: Configure Capacitor JSON
+        shell: bash
+        run: |
+          if [ -f capacitor.config.json ]; then
+            node -e '
+              const fs = require("fs");
+              const p = "capacitor.config.json";
+              const c = JSON.parse(fs.readFileSync(p, "utf8"));
+              c.appName = "Sam Care";
+              c.appId = "com.samcare.app";
+              c.webDir = "dist";
+              fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            '
+          fi
+
+      - name: Add Android platform
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Synchronize Android
+        run: npx cap sync android
+
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload Sam Care APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sam-Care-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
