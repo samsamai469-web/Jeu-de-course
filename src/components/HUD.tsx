@@ -12,7 +12,7 @@ import {
   WeatherType,
 } from '../types/game';
 import { TouchInputState } from './RacingCanvas';
-import { Pause, Volume2, VolumeX, Video, Sun, Gamepad2, Settings, CloudRain, Eye } from 'lucide-react';
+import { Pause, Volume2, VolumeX, Video, Sun, Gamepad2, Settings, CloudRain, Eye, Smartphone, RotateCcw } from 'lucide-react';
 
 interface HUDProps {
   telemetry: TelemetryState;
@@ -99,7 +99,7 @@ export const HUD: React.FC<HUDProps> = ({
           const { cx, cy } = toSvg(p.x, p.z);
           return `${idx === 0 ? 'M' : 'L'} ${cx.toFixed(1)} ${cy.toFixed(1)}`;
         })
-        .join(' ') + ' Z';
+        .join(' ');
 
     const playerSvg = toSvg(telemetry.playerPos.x, telemetry.playerPos.z);
     const headingDeg = (-telemetry.playerPos.heading * 180) / Math.PI;
@@ -411,6 +411,31 @@ export const HUD: React.FC<HUDProps> = ({
               >
                 <Gamepad2 className="w-4 h-4" />
               </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+                      await document.documentElement.requestFullscreen();
+                    }
+                    const orient = window.screen?.orientation as unknown as {
+                      lock?: (mode: string) => Promise<void>;
+                    };
+                    if (orient && typeof orient.lock === 'function') {
+                      await orient.lock('landscape');
+                    }
+                  } catch {
+                    // Orientation lock or fullscreen not supported in this browser context
+                  }
+                }}
+                title="Mode Paysage / Plein Écran (Tourner le téléphone)"
+                aria-label="Mode Paysage Plein Écran"
+                className="px-2.5 h-9 rounded-full bg-amber-500/85 hover:bg-amber-400 border border-amber-300 text-slate-950 font-display font-bold text-[10px] flex items-center gap-1 shadow transition-colors"
+              >
+                <Smartphone className="w-3.5 h-3.5 rotate-90" />
+                <span className="hidden xs:inline">PAYSAGE</span>
+              </button>
             </div>
 
             {(gameMode === 'race' || gameMode === 'time_attack' || gameMode === 'exploration') && (
@@ -513,6 +538,18 @@ export const HUD: React.FC<HUDProps> = ({
 
           <button
             type="button"
+            onClick={() => {
+              touchInputRef.current.respawnQueued = true;
+            }}
+            title="Rétablir la voiture sur la piste en cas d'accident (Touche R)"
+            aria-label="Rétablir la voiture sur la piste"
+            className="w-10 h-10 rounded-full bg-amber-500/25 hover:bg-amber-500/45 border border-amber-400/60 text-amber-300 hover:text-white flex items-center justify-center transition-colors shadow-lg active:scale-95"
+          >
+            <RotateCcw className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
             onClick={onToggleSound}
             title={soundEnabled ? 'Couper le son' : 'Activer le son'}
             aria-label={soundEnabled ? 'Couper le son' : 'Activer le son'}
@@ -605,6 +642,18 @@ export const HUD: React.FC<HUDProps> = ({
                   {telemetry.lastCheckpointBanner}
                 </span>
               </div>
+            )}
+            {telemetry.speedKmh < 3 && telemetry.countdown < 0 && !telemetry.raceFinished && (
+              <button
+                type="button"
+                onClick={() => {
+                  touchInputRef.current.respawnQueued = true;
+                }}
+                className="pointer-events-auto bg-amber-500 hover:bg-amber-400 text-slate-950 px-3.5 py-1.5 rounded-xl font-display font-bold text-xs flex items-center gap-1.5 shadow-2xl border border-white/80 active:scale-95 transition-transform mt-1"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>ACCIDENT / BLOQUÉ ? RÉTABLIR SUR LA PISTE</span>
+              </button>
             )}
           </>
         )}

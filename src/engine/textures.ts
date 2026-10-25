@@ -60,14 +60,13 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   rCtx.fillStyle = tarmacGrad;
   rCtx.fillRect(0, 0, 1024, 1024);
 
-  // Fine mineral aggregate micro-grain (70,000 grains around #3a3d42)
-  for (let i = 0; i < 70000; i++) {
+  // Fine mineral aggregate micro-grain (fast startup)
+  for (let i = 0; i < 1200; i++) {
     const x = Math.random() * 1024;
     const y = Math.random() * 1024;
     const base = 48 + Math.floor(Math.random() * 32);
     rCtx.fillStyle = `rgba(${base}, ${base + 2}, ${base + 5}, 0.45)`;
-    const sz = Math.random() > 0.84 ? 2.2 : 1.4;
-    rCtx.fillRect(x, y, sz, sz);
+    rCtx.fillRect(x, y, 4, 4);
   }
 
   // Subtle dark tar joints & longitudinal paving seams
@@ -89,14 +88,6 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   rCtx.fillStyle = '#ffffff';
   for (let y = 0; y < 1024; y += 128) {
     rCtx.fillRect(504, y + 16, 16, 76);
-  }
-
-  // Subtle grain over painted lines
-  for (let i = 0; i < 6000; i++) {
-    const x = Math.random() * 1024;
-    const y = Math.random() * 1024;
-    rCtx.fillStyle = 'rgba(58, 61, 66, 0.22)';
-    rCtx.fillRect(x, y, 2, 2);
   }
 
   const roadTexture = new THREE.CanvasTexture(roadCanvas);
@@ -165,12 +156,12 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   rgGrad.addColorStop(1.0, '#e5e5e5');
   rgCtx.fillStyle = rgGrad;
   rgCtx.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 6500; i++) {
+  for (let i = 0; i < 600; i++) {
     const x = Math.random() * 512;
     const y = Math.random() * 512;
     const v = 140 + Math.floor(Math.random() * 95);
     rgCtx.fillStyle = `rgb(${v},${v},${v})`;
-    rgCtx.fillRect(x, y, 3, 3);
+    rgCtx.fillRect(x, y, 6, 6);
   }
   const roadRoughnessMap = new THREE.CanvasTexture(roughCanvas);
   roadRoughnessMap.wrapS = THREE.RepeatWrapping;
@@ -194,11 +185,6 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   // Subtle bevel & tire rubber scuffing along the inner edge
   kCtx.fillStyle = 'rgba(12, 15, 20, 0.42)';
   kCtx.fillRect(0, 0, 34, 256);
-  for (let i = 0; i < 2400; i++) {
-    const v = 40 + Math.floor(Math.random() * 60);
-    kCtx.fillStyle = `rgba(${v}, ${v}, ${v}, 0.18)`;
-    kCtx.fillRect(Math.random() * 256, Math.random() * 256, 3, 3);
-  }
   const kerbTexture = new THREE.CanvasTexture(kerbCanvas);
   kerbTexture.colorSpace = THREE.SRGBColorSpace;
   kerbTexture.wrapS = THREE.RepeatWrapping;
@@ -207,17 +193,17 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
 
   // 4b. Crushed Stone Gravel Verge Texture (Gravier de chaque côté)
   const gvCanvas = document.createElement('canvas');
-  gvCanvas.width = 512;
-  gvCanvas.height = 512;
+  gvCanvas.width = 256;
+  gvCanvas.height = 256;
   const gvCtx = gvCanvas.getContext('2d')!;
   gvCtx.fillStyle = '#3f3c38';
-  gvCtx.fillRect(0, 0, 512, 512);
+  gvCtx.fillRect(0, 0, 256, 256);
   const gravelShades = ['#57534e', '#44403c', '#78716c', '#292524', '#6b655e'];
-  for (let i = 0; i < 26000; i++) {
-    const x = Math.random() * 512;
-    const y = Math.random() * 512;
+  for (let i = 0; i < 1200; i++) {
+    const x = Math.random() * 256;
+    const y = Math.random() * 256;
     gvCtx.fillStyle = gravelShades[i % gravelShades.length];
-    const sz = 1.5 + Math.random() * 3.0;
+    const sz = 2.5 + Math.random() * 4.0;
     gvCtx.fillRect(x, y, sz, sz);
   }
   const gravelTexture = new THREE.CanvasTexture(gvCanvas);
@@ -351,10 +337,10 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     cwCtx.arc(x + 34, 185, 3, 0, Math.PI * 2);
     cwCtx.fill();
   }
-  for (let i = 0; i < 6000; i++) {
+  for (let i = 0; i < 500; i++) {
     const v = 50 + Math.floor(Math.random() * 65);
     cwCtx.fillStyle = `rgba(${v},${v + 1},${v + 2},0.22)`;
-    cwCtx.fillRect(Math.random() * 512, Math.random() * 256, 3, 3);
+    cwCtx.fillRect(Math.random() * 512, Math.random() * 256, 5, 5);
   }
   const concreteWallTexture = new THREE.CanvasTexture(cwCanvas);
   concreteWallTexture.colorSpace = THREE.SRGBColorSpace;
@@ -533,18 +519,18 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
 
   // 12. Natural Valley Meadow & Soil Ground Texture
   const ggCanvas = document.createElement('canvas');
-  ggCanvas.width = 512;
-  ggCanvas.height = 512;
+  ggCanvas.width = 256;
+  ggCanvas.height = 256;
   const ggCtx = ggCanvas.getContext('2d')!;
   ggCtx.fillStyle = '#253322';
-  ggCtx.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 12000; i++) {
-    const x = Math.random() * 512;
-    const y = Math.random() * 512;
+  ggCtx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 900; i++) {
+    const x = Math.random() * 256;
+    const y = Math.random() * 256;
     const pick = Math.random();
     ggCtx.fillStyle =
       pick < 0.4 ? 'rgba(44, 62, 36, 0.5)' : pick < 0.75 ? 'rgba(30, 44, 26, 0.5)' : 'rgba(62, 54, 42, 0.35)';
-    ggCtx.fillRect(x, y, 4, 4);
+    ggCtx.fillRect(x, y, 6, 6);
   }
   const grassGroundTexture = new THREE.CanvasTexture(ggCanvas);
   grassGroundTexture.colorSpace = THREE.SRGBColorSpace;
@@ -630,10 +616,10 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     bCtx.fillRect(0, 0, 512, 1024);
 
     // Fine stone texture noise on facade walls
-    for (let i = 0; i < 8000; i++) {
+    for (let i = 0; i < 600; i++) {
       const v = isNight ? 18 + Math.random() * 18 : 65 + Math.random() * 32;
       bCtx.fillStyle = `rgba(${v},${v + 2},${v + 5},0.28)`;
-      bCtx.fillRect(Math.random() * 512, Math.random() * 1024, 3, 3);
+      bCtx.fillRect(Math.random() * 512, Math.random() * 1024, 6, 6);
     }
 
     const rows = 16;

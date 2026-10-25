@@ -73,6 +73,7 @@ export interface TrackSpec {
   roadWidth: number;
   theme: 'city' | 'circuit' | 'coastal';
   biome: TrackBiome;
+  isStraight?: boolean;
   targetGoldSec: number;
   targetSilverSec: number;
   targetBronzeSec: number;
@@ -230,6 +231,20 @@ export function getEffectiveCarSpec(base: CarSpec, upgrades?: CarPerformanceUpgr
 }
 
 export const CARS: CarSpec[] = [
+  {
+    id: 'mercedes-amg-gt',
+    name: 'Mercedes-AMG GT V8 BiTurbo',
+    category: 'Supercar V8 BiTurbo GT',
+    tagline: 'V8 4.0L BiTurbo grondant de 730 ch, calandre Panamericana chromée avec étoile Mercedes, échappement sport actif AMG rugissant.',
+    maxSpeedKmh: 342,
+    acceleration: 42,
+    handling: 3.15,
+    braking: 56,
+    defaultColor: '#475569', // Gris Sélénite Magno métallisé AMG
+    defaultRimColor: '#0f172a', // Jantes forgées AMG noir profond & bord poli
+    bodyStyle: 'gt',
+    stats: { speed: 95, accel: 94, handling: 92, braking: 93 },
+  },
   {
     id: 'vortex-rs',
     name: 'Civic EK-R Turbo',

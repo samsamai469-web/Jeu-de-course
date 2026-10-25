@@ -74,6 +74,29 @@ const DEFAULT_PROGRESS: PlayerProgress = {
   completedChallenges: {},
 };
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// Valide les données lues dans localStorage (elles peuvent être vides ou corrompues).
+function sanitizeProgress(raw: unknown): PlayerProgress {
+  if (!isRecord(raw)) return DEFAULT_PROGRESS;
+  const num = (v: unknown, fallback: number, min: number, max = Infinity) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+  const rec = (v: unknown) => (isRecord(v) ? v : {});
+  return {
+    ...DEFAULT_PROGRESS,
+    ...(raw as Partial<PlayerProgress>),
+    xp: num(raw.xp, 0, 0),
+    driverLevel: Math.floor(num(raw.driverLevel, 1, 1)),
+    unlockedLevels: Math.floor(num(raw.unlockedLevels, 1, 1, TRACKS.length)),
+    stars: rec(raw.stars) as PlayerProgress['stars'],
+    medals: rec(raw.medals) as PlayerProgress['medals'],
+    bestLapTimes: rec(raw.bestLapTimes) as PlayerProgress['bestLapTimes'],
+    bestTotalTimes: rec(raw.bestTotalTimes) as PlayerProgress['bestTotalTimes'],
+    completedChallenges: rec(raw.completedChallenges) as PlayerProgress['completedChallenges'],
+  };
+}
+
 const MEDAL_RANK: Record<MedalTier, number> = {
   none: 0,
   bronze: 1,
@@ -96,7 +119,8 @@ export default function App() {
       try {
         const raw = localStorage.getItem(STORAGE_UPGRADES_KEY);
         if (raw) {
-          return JSON.parse(raw);
+          const parsed: unknown = JSON.parse(raw);
+          if (isRecord(parsed)) return parsed as Record<string, CarPerformanceUpgrades>;
         }
       } catch {
         // Ignore storage errors
@@ -109,13 +133,30 @@ export default function App() {
     try {
       const raw = localStorage.getItem(STORAGE_PROGRESS_KEY);
       if (raw) {
-        return { ...DEFAULT_PROGRESS, ...JSON.parse(raw) };
+        return sanitizeProgress(JSON.parse(raw));
       }
     } catch {
       // Ignore storage errors
     }
     return DEFAULT_PROGRESS;
   });
+
+  // Sauvegarde dans localStorage (en dehors des fonctions de mise à jour du state, qui doivent rester pures)
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify(playerProgress));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [playerProgress]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_UPGRADES_KEY, JSON.stringify(carUpgradesByCar));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [carUpgradesByCar]);
 
   const [selectedTrack, setSelectedTrack] = useState<TrackSpec>(TRACKS[0]);
   const [selectedMode, setSelectedMode] = useState<GameMode>('race');
@@ -201,13 +242,7 @@ export default function App() {
       setCarUpgradesByCar((prev) => {
         const current = prev[selectedCar.id] ?? DEFAULT_UPGRADES;
         const nextForCar = { ...current, ...patch };
-        const updated = { ...prev, [selectedCar.id]: nextForCar };
-        try {
-          localStorage.setItem(STORAGE_UPGRADES_KEY, JSON.stringify(updated));
-        } catch {
-          // Ignore storage errors
-        }
-        return updated;
+        return { ...prev, [selectedCar.id]: nextForCar };
       });
     },
     [selectedCar.id]
@@ -348,12 +383,6 @@ export default function App() {
             [selectedTrack.id]: bestStars === 3 || Boolean(prev.completedChallenges?.[selectedTrack.id]),
           },
         };
-
-        try {
-          localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify(nextProgress));
-        } catch {
-          // Ignore storage errors
-        }
 
         return nextProgress;
       });

@@ -1,0 +1,966 @@
+# Corrections — Apex Horizon
+
+Un seul fichier avec UNIQUEMENT ce qui a été corrigé.
+Pour chaque modification : cherche le bloc « ANCIEN CODE » dans ton fichier et remplace-le par le « NOUVEAU CODE ».
+(Si « ANCIEN CODE » est vide, ajoute simplement le nouveau code à cet endroit.)
+
+
+---
+
+## 0. NOUVEAU FICHIER : src/engine/carPhysics.ts
+
+Crée ce fichier avec exactement ce contenu :
+
+```ts
+// ============================================================================
+// CAR PHYSICS — modèle à vitesse vectorielle (avant + latérale)
+// ----------------------------------------------------------------------------
+// Module pur : aucune dépendance à Three.js ni à React, donc testable seul.
+//
+// Principe :
+//  - la voiture a une vitesse AVANT (speedMs) et une vitesse LATÉRALE (lateralVel)
+//    exprimées dans son propre repère ;
+//  - le volant (angle d'Ackermann) demande une vitesse de rotation (yaw rate) ;
+//  - cette rotation est LIMITÉE par l'adhérence disponible (sous-virage) ;
+//  - quand la voiture tourne, sa vitesse "glisse" latéralement et les pneus
+//    la ramènent vers zéro avec une force proportionnelle à l'adhérence ;
+//  - frein + volant à haute vitesse = adhérence réduite = vrai dérapage.
+//
+// Conventions (identiques au jeu) :
+//  - heading : 0 = vers -Z, positif = tourne à gauche
+//  - avant  = (-sin h, -cos h)      droite = (cos h, -sin h)
+//  - steerInput / angles de volant : positif = droite
+//  - lateralVel : positif = la voiture glisse vers sa droite
+// ============================================================================
+
+export const PHYS_STEP = 1 / 120; // pas de simulation maximal (s)
+
+const DEG = Math.PI / 180;
+const RAD = 180 / Math.PI;
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+// ----------------------------------------------------------------------------
+// Direction
+// ----------------------------------------------------------------------------
+
+/** Angle de braquage max (degrés) selon la vitesse (km/h). */
+export function evalMaxAngleBySpeed(speedKmh: number): number {
+  if (speedKmh <= 0) return 35.0;
+  if (speedKmh <= 60.0) return lerp(35.0, 22.0, speedKmh / 60.0);
+  if (speedKmh <= 120.0) return lerp(22.0, 10.0, (speedKmh - 60.0) / 60.0);
+  if (speedKmh <= 200.0) return lerp(10.0, 5.0, (speedKmh - 120.0) / 80.0);
+  return lerp(5.0, 3.8, Math.min(1.0, (speedKmh - 200.0) / 140.0));
+}
+
+/** Lissage du volant : rotation progressive, retour au centre plus rapide. */
+export function updateCarSteerAngle(
+  currentAngleDeg: number,
+  steerInput: number,
+  speedKmh: number,
+  dt: number,
+  sensitivity = 1.0,
+  steerRate = 150.0,
+  returnRate = 280.0,
+  highSpeedDamping = 0.5,
+  highSpeedKmh = 180.0
+): number {
+  const maxAngle = evalMaxAngleBySpeed(speedKmh) * sensitivity;
+  const target = clamp(steerInput * maxAngle, -maxAngle, maxAngle);
+
+  const returning =
+    Math.abs(steerInput) < 0.01 || Math.sign(steerInput) !== Math.sign(currentAngleDeg);
+
+  const speedFactor = lerp(1.0, 1.0 - highSpeedDamping, clamp(speedKmh / highSpeedKmh, 0, 1));
+  const rate = (returning ? returnRate : steerRate) * speedFactor;
+
+  const diff = target - currentAngleDeg;
+  if (Math.abs(diff) <= rate * dt) return target;
+  return currentAngleDeg + Math.sign(diff) * rate * dt;
+}
+
+/** Contre-braquage automatique : on braque vers la direction réelle du déplacement. */
+export function computeCounterSteer(
+  slipAngleDeg: number,
+  speedMs: number,
+  isReversing: boolean,
+  counterSteerAssist = 0.35,
+  assistMinSpeed = 8.0 / 3.6,
+  assistMaxCorrection = 20.0
+): number {
+  if (counterSteerAssist <= 0 || speedMs < assistMinSpeed || isReversing) return 0;
+  return clamp(slipAngleDeg, -assistMaxCorrection, assistMaxCorrection) * counterSteerAssist;
+}
+
+/** Géométrie d'Ackermann : la roue intérieure braque plus que l'extérieure. */
+export function applyAckermann(
+  angleDeg: number,
+  wheelBase = 2.6,
+  trackWidth = 1.5
+): { leftDeg: number; rightDeg: number; avgRad: number } {
+  const limit = evalMaxAngleBySpeed(0);
+  const a = clamp(angleDeg, -limit, limit);
+
+  if (Math.abs(a) < 0.01) return { leftDeg: 0, rightDeg: 0, avgRad: 0 };
+
+  const radius = wheelBase / Math.tan(Math.abs(a) * DEG);
+  const half = trackWidth * 0.5;
+  const innerRad = Math.atan(wheelBase / Math.max(radius - half, 0.01));
+  const outerRad = Math.atan(wheelBase / (radius + half));
+  const innerDeg = innerRad * RAD;
+  const outerDeg = outerRad * RAD;
+
+  if (a > 0) {
+    return { leftDeg: outerDeg, rightDeg: innerDeg, avgRad: (innerRad + outerRad) * 0.5 };
+  }
+  return { leftDeg: -innerDeg, rightDeg: -outerDeg, avgRad: -(innerRad + outerRad) * 0.5 };
+}
+
+// ----------------------------------------------------------------------------
+// Dynamique
+// ----------------------------------------------------------------------------
+
+/** État modifié par la physique (l'objet `phys` du jeu satisfait cette interface). */
+export interface CarDynState {
+  x: number;
+  z: number;
+  heading: number;
+  speedMs: number; // vitesse avant (négative en marche arrière)
+  lateralVel: number; // vitesse latérale réelle (positive = vers la droite)
+  yawRate: number; // rad/s, positif = vers la gauche
+  steerAngleDeg: number;
+  frontLeftSteerDeg: number;
+  frontRightSteerDeg: number;
+  steerAngle: number; // rad, moyenne Ackermann
+  slipAngleDeg: number;
+  drifting: boolean;
+}
+
+export interface CarDynInput {
+  steerInput: number; // -1..1
+  throttle: boolean;
+  brake: boolean;
+  canDrive: boolean;
+  nitroActive: boolean;
+  sensitivity: number;
+  gripFactor: number; // surface × appui aéro
+  maxSpeedMs: number;
+  acceleration: number; // carSpec.acceleration
+  braking: number; // carSpec.braking
+  handling: number; // carSpec.handling
+  offRoad: boolean; // accotement
+}
+
+/** Réglages de comportement (modifiables pour affiner le feeling). */
+export const CAR_TUNING = {
+  wheelBase: 2.6,
+  /** Accélération latérale max (m/s²) pour handling = 3.0 et grip = 1. */
+  maxLateralAccel: 26.0,
+  /** Réactivité de la rotation de caisse (1/s) : plus haut = plus nerveux. */
+  yawResponse: 14.0,
+  yawResponseDrift: 6.0,
+  /** Force de rappel des pneus sur la vitesse latérale (1/s) à grip = 1. */
+  tireGrip: 9.0,
+  /** Multiplicateur d'adhérence en dérapage contrôlé (frein + volant). */
+  driftGripFactor: 0.28,
+  /** Perte de vitesse due au glissement (1/s par m/s de glissement). */
+  slideScrub: 0.06,
+  /** Multiplicateur historique du taux de rotation (compatibilité avec l'ancien feeling). */
+  yawGain: 0.52,
+};
+
+/**
+ * Avance la voiture de `h` secondes. À appeler plusieurs fois par image avec un
+ * `h` ≤ PHYS_STEP pour une simulation indépendante du nombre d'images par seconde.
+ */
+export function stepCarDynamics(s: CarDynState, i: CarDynInput, h: number): void {
+  const T = CAR_TUNING;
+  const speedAbs = Math.abs(s.speedMs);
+  const speedKmh = speedAbs * 3.6;
+  const isReversing = s.speedMs < -0.1 || (i.brake && s.speedMs < 0.2);
+
+  // --- 1. Volant (lissage + contre-braquage + Ackermann) --------------------
+  s.steerAngleDeg = updateCarSteerAngle(s.steerAngleDeg, i.steerInput, speedKmh, h, i.sensitivity);
+  const counter = computeCounterSteer(s.slipAngleDeg, speedAbs, isReversing);
+  const ack = applyAckermann(s.steerAngleDeg + counter, T.wheelBase);
+  s.frontLeftSteerDeg = ack.leftDeg;
+  s.frontRightSteerDeg = ack.rightDeg;
+  s.steerAngle = ack.avgRad;
+
+  // --- 2. Dérapage contrôlé (frein + gros angle à haute vitesse) ------------
+  s.drifting = Math.abs(i.steerInput) > 0.55 && speedAbs > 18 && i.brake;
+
+  // --- 3. Longitudinal : accélération, freinage, marche arrière, traînée ----
+  if (i.canDrive && i.throttle && !i.brake) {
+    const power = i.acceleration * (i.nitroActive ? 1.6 : 1.0) * Math.max(0.72, i.gripFactor);
+    const ratio = Math.max(0, s.speedMs) / Math.max(1, i.maxSpeedMs);
+    const torque = Math.max(0.42, 1.0 - Math.pow(ratio, 1.8) * 0.58);
+    s.speedMs = Math.min(i.maxSpeedMs, s.speedMs + power * torque * h);
+  } else if (i.canDrive && i.brake) {
+    if (s.speedMs > 0.4) {
+      const brakeScale = s.drifting ? 0.55 : 1.0; // on freine moins fort en glissant
+      s.speedMs = Math.max(0, s.speedMs - i.braking * i.gripFactor * 1.35 * brakeScale * h);
+    } else {
+      s.speedMs = Math.max(-18, s.speedMs - i.acceleration * 0.85 * h);
+    }
+  } else {
+    const drag = (0.36 + 0.001 * s.speedMs * s.speedMs) * (i.offRoad ? 2.2 : 1.0);
+    s.speedMs *= Math.exp(-drag * h);
+  }
+
+  // --- 4. Rotation demandée, limitée par l'adhérence (sous-virage) ----------
+  const wanted = -(s.speedMs / T.wheelBase) * Math.tan(s.steerAngle) * i.handling * T.yawGain;
+
+  const maxLat = T.maxLateralAccel * (i.handling / 3.0) * Math.max(0.35, i.gripFactor);
+  const yawLimit = maxLat / Math.max(2.0, Math.abs(s.speedMs));
+  const target = clamp(wanted, -yawLimit, yawLimit);
+
+  const response = s.drifting ? T.yawResponseDrift : T.yawResponse;
+  s.yawRate += (target - s.yawRate) * (1 - Math.exp(-response * h));
+  s.heading += s.yawRate * h;
+
+  // --- 5. Vitesse latérale : la rotation la crée, les pneus la ramènent à 0 -
+  const vx = s.speedMs;
+  let vy = s.lateralVel;
+  vy += vx * s.yawRate * h; // la caisse tourne, la vitesse monde reste
+  s.speedMs -= vy * s.yawRate * h; // même rotation vue côté avant
+
+  const grip = T.tireGrip * Math.max(0.35, i.gripFactor) * (s.drifting ? T.driftGripFactor : 1.0);
+  vy *= Math.exp(-grip * h);
+  vy = clamp(vy, -Math.max(2, speedAbs * 0.9), Math.max(2, speedAbs * 0.9));
+  s.lateralVel = vy;
+
+  // Glisser coûte de la vitesse.
+  s.speedMs *= Math.exp(-T.slideScrub * Math.abs(vy) * h);
+
+  s.slipAngleDeg = Math.atan2(vy, Math.max(1.0, Math.abs(s.speedMs))) * RAD;
+
+  // --- 6. Intégration de la position dans le repère monde -------------------
+  const sinH = Math.sin(s.heading);
+  const cosH = Math.cos(s.heading);
+  const fwdX = -sinH;
+  const fwdZ = -cosH;
+  const rightX = cosH;
+  const rightZ = -sinH;
+  s.x += (fwdX * s.speedMs + rightX * s.lateralVel) * h;
+  s.z += (fwdZ * s.speedMs + rightZ * s.lateralVel) * h;
+}
+
+/** Découpe `dt` en sous-pas fixes et avance la voiture. */
+export function stepCarDynamicsSubsteps(s: CarDynState, i: CarDynInput, dt: number): void {
+  const steps = Math.max(1, Math.ceil(dt / PHYS_STEP));
+  const h = dt / steps;
+  for (let k = 0; k < steps; k++) stepCarDynamics(s, i, h);
+}
+
+```
+
+
+---
+
+## FICHIER : src/App.tsx
+
+
+### Modification 1 — src/App.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+};
+
+const MEDAL_RANK: Record<MedalTier, number> = {
+  none: 0,
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+};
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// Valide les données lues dans localStorage (elles peuvent être vides ou corrompues).
+function sanitizeProgress(raw: unknown): PlayerProgress {
+  if (!isRecord(raw)) return DEFAULT_PROGRESS;
+  const num = (v: unknown, fallback: number, min: number, max = Infinity) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+  const rec = (v: unknown) => (isRecord(v) ? v : {});
+  return {
+    ...DEFAULT_PROGRESS,
+    ...(raw as Partial<PlayerProgress>),
+    xp: num(raw.xp, 0, 0),
+    driverLevel: Math.floor(num(raw.driverLevel, 1, 1)),
+    unlockedLevels: Math.floor(num(raw.unlockedLevels, 1, 1, TRACKS.length)),
+    stars: rec(raw.stars) as PlayerProgress['stars'],
+    medals: rec(raw.medals) as PlayerProgress['medals'],
+    bestLapTimes: rec(raw.bestLapTimes) as PlayerProgress['bestLapTimes'],
+    bestTotalTimes: rec(raw.bestTotalTimes) as PlayerProgress['bestTotalTimes'],
+    completedChallenges: rec(raw.completedChallenges) as PlayerProgress['completedChallenges'],
+  };
+}
+
+const MEDAL_RANK: Record<MedalTier, number> = {
+  none: 0,
+```
+
+
+### Modification 2 — src/App.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+        const raw = localStorage.getItem(STORAGE_UPGRADES_KEY);
+        if (raw) {
+          return JSON.parse(raw);
+        }
+      } catch {
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+        const raw = localStorage.getItem(STORAGE_UPGRADES_KEY);
+        if (raw) {
+          const parsed: unknown = JSON.parse(raw);
+          if (isRecord(parsed)) return parsed as Record<string, CarPerformanceUpgrades>;
+        }
+      } catch {
+```
+
+
+### Modification 3 — src/App.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+      const raw = localStorage.getItem(STORAGE_PROGRESS_KEY);
+      if (raw) {
+        return { ...DEFAULT_PROGRESS, ...JSON.parse(raw) };
+      }
+    } catch {
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+      const raw = localStorage.getItem(STORAGE_PROGRESS_KEY);
+      if (raw) {
+        return sanitizeProgress(JSON.parse(raw));
+      }
+    } catch {
+```
+
+
+### Modification 4 — src/App.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+    return DEFAULT_PROGRESS;
+  });
+
+  const [selectedTrack, setSelectedTrack] = useState<TrackSpec>(TRACKS[0]);
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+    return DEFAULT_PROGRESS;
+  });
+
+  // Sauvegarde dans localStorage (en dehors des fonctions de mise à jour du state, qui doivent rester pures)
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify(playerProgress));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [playerProgress]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_UPGRADES_KEY, JSON.stringify(carUpgradesByCar));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [carUpgradesByCar]);
+
+  const [selectedTrack, setSelectedTrack] = useState<TrackSpec>(TRACKS[0]);
+```
+
+
+### Modification 5 — src/App.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+        const current = prev[selectedCar.id] ?? DEFAULT_UPGRADES;
+        const nextForCar = { ...current, ...patch };
+        const updated = { ...prev, [selectedCar.id]: nextForCar };
+        try {
+          localStorage.setItem(STORAGE_UPGRADES_KEY, JSON.stringify(updated));
+        } catch {
+          // Ignore storage errors
+        }
+        return updated;
+      });
+    },
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+        const current = prev[selectedCar.id] ?? DEFAULT_UPGRADES;
+        const nextForCar = { ...current, ...patch };
+        return { ...prev, [selectedCar.id]: nextForCar };
+      });
+    },
+```
+
+
+### Modification 6 — src/App.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+          },
+        };
+
+        try {
+          localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify(nextProgress));
+        } catch {
+          // Ignore storage errors
+        }
+
+        return nextProgress;
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+          },
+        };
+
+        return nextProgress;
+```
+
+
+---
+
+## FICHIER : src/audio/soundEngine.ts
+
+
+### Modification 7 — src/audio/soundEngine.ts
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+  private isInitialized = false;
+  private isMuted = false;
+  private volume = 0.88;
+
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+  private isInitialized = false;
+  private isMuted = false;
+  private lastCollisionTime = -1; // anti-spam : un seul bruit d'impact toutes les ~180 ms
+  private volume = 0.88;
+
+```
+
+
+### Modification 8 — src/audio/soundEngine.ts
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+    try {
+      const now = this.ctx.currentTime;
+      const clampedIntensity = Math.min(1.0, Math.max(0.1, intensity));
+
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+    try {
+      const now = this.ctx.currentTime;
+      if (now - this.lastCollisionTime < 0.18) return;
+      this.lastCollisionTime = now;
+      const clampedIntensity = Math.min(1.0, Math.max(0.1, intensity));
+
+```
+
+
+---
+
+## FICHIER : src/components/RacingCanvas.tsx
+
+
+### Modification 9 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+import { ParticlePool } from '../engine/particles';
+import { soundEngine } from '../audio/soundEngine';
+
+export interface TouchInputState {
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+import { ParticlePool } from '../engine/particles';
+import { soundEngine } from '../audio/soundEngine';
+import { stepCarDynamicsSubsteps, type CarDynInput } from '../engine/carPhysics';
+
+export interface TouchInputState {
+```
+
+
+### Modification 10 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+const AI_COLORS = ['#2563eb', '#9333ea', '#e11d48', '#eab308', '#0d9488', '#ea580c', '#16a34a'];
+
+// ============================================================================
+// CAR STEERING & STABILITY PHYSICS (Ported directly from Unity CarSteering)
+// Features: Ackermann geometry, Speed-dependent steering curve, Asymmetric
+// steer/return rates, Counter-steer drift assist, Downforce & Anti-Roll
+// ============================================================================
+
+// 1. Angle max piloté par une courbe selon la vitesse (km/h -> degrés)
+// Keyframes: (0, 35°), (60, 22°), (120, 10°), (200, 5°)
+export function evalMaxAngleBySpeed(speedKmh: number): number {
+  if (speedKmh <= 0) return 35.0;
+  if (speedKmh <= 60.0) return THREE.MathUtils.lerp(35.0, 22.0, speedKmh / 60.0);
+  if (speedKmh <= 120.0) return THREE.MathUtils.lerp(22.0, 10.0, (speedKmh - 60.0) / 60.0);
+  if (speedKmh <= 200.0) return THREE.MathUtils.lerp(10.0, 5.0, (speedKmh - 120.0) / 80.0);
+  return THREE.MathUtils.lerp(5.0, 3.8, Math.min(1.0, (speedKmh - 200.0) / 140.0));
+}
+
+// 2. Lissage de l'entrée avec rotation (150°/s) et retour au centre rapide (280°/s)
+export function updateCarSteerAngle(
+  currentAngleDeg: number,
+  steerInput: number, // -1 (gauche) à +1 (droite)
+  speedKmh: number,
+  dt: number,
+  sensitivity = 1.0,
+  steerRate = 150.0,
+  returnRate = 280.0,
+  highSpeedDamping = 0.5,
+  highSpeedKmh = 180.0
+): number {
+  const maxAngle = evalMaxAngleBySpeed(speedKmh) * sensitivity;
+  const target = THREE.MathUtils.clamp(steerInput * maxAngle, -maxAngle, maxAngle);
+
+  // Retour au centre ou changement de sens : réaction plus rapide (returnRate)
+  const returning = Math.abs(steerInput) < 0.01 || Math.sign(steerInput) !== Math.sign(currentAngleDeg);
+
+  const speedFactor = THREE.MathUtils.lerp(1.0, 1.0 - highSpeedDamping, THREE.MathUtils.clamp(speedKmh / highSpeedKmh, 0, 1));
+  const rate = (returning ? returnRate : steerRate) * speedFactor;
+
+  // Mathf.MoveTowards
+  const diff = target - currentAngleDeg;
+  if (Math.abs(diff) <= rate * dt) {
+    return target;
+  }
+  return currentAngleDeg + Math.sign(diff) * rate * dt;
+}
+
+// 3. Aide au contre-braquage automatique en cas de dérapage (désactivée en marche arrière)
+export function computeCounterSteer(
+  slipAngleDeg: number,
+  speedMs: number,
+  isReversing: boolean,
+  counterSteerAssist = 0.35,
+  assistMinSpeed = 8.0 / 3.6, // 8 km/h en m/s
+  assistMaxCorrection = 20.0
+): number {
+  if (counterSteerAssist <= 0 || speedMs < assistMinSpeed || isReversing) {
+    return 0;
+  }
+
+  const clampedSlip = THREE.MathUtils.clamp(slipAngleDeg, -assistMaxCorrection, assistMaxCorrection);
+  return clampedSlip * counterSteerAssist;
+}
+
+// 4. Géométrie d'Ackermann (la roue intérieure braque plus fort que la roue extérieure)
+export function applyAckermann(
+  angleDeg: number,
+  wheelBase = 2.6,
+  trackWidth = 1.5
+): { leftDeg: number; rightDeg: number; avgRad: number } {
+  const limit = evalMaxAngleBySpeed(0); // 35°
+  const clampedAngleDeg = THREE.MathUtils.clamp(angleDeg, -limit, limit);
+
+  if (Math.abs(clampedAngleDeg) < 0.01) {
+    return { leftDeg: 0, rightDeg: 0, avgRad: 0 };
+  }
+
+  const angleRad = Math.abs(clampedAngleDeg) * (Math.PI / 180.0);
+  const radius = wheelBase / Math.tan(angleRad);
+  const half = trackWidth * 0.5;
+  const innerRad = Math.atan(wheelBase / Math.max(radius - half, 0.01));
+  const outerRad = Math.atan(wheelBase / (radius + half));
+
+  const innerDeg = innerRad * (180.0 / Math.PI);
+  const outerDeg = outerRad * (180.0 / Math.PI);
+
+  if (clampedAngleDeg > 0) {
+    // Braquage à droite : roue droite intérieure, roue gauche extérieure
+    return {
+      leftDeg: outerDeg,
+      rightDeg: innerDeg,
+      avgRad: (innerRad + outerRad) * 0.5,
+    };
+  } else {
+    // Braquage à gauche : roue gauche intérieure, roue droite extérieure
+    return {
+      leftDeg: -innerDeg,
+      rightDeg: -outerDeg,
+      avgRad: -(innerRad + outerRad) * 0.5,
+    };
+  }
+}
+
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+const AI_COLORS = ['#2563eb', '#9333ea', '#e11d48', '#eab308', '#0d9488', '#ea580c', '#16a34a'];
+
+// La physique de la voiture (direction, Ackermann, adhérence, dérapage) vit dans
+// src/engine/carPhysics.ts. On re-exporte ces fonctions pour rester compatible.
+export {
+  evalMaxAngleBySpeed,
+  updateCarSteerAngle,
+  computeCounterSteer,
+  applyAckermann,
+} from '../engine/carPhysics';
+
+// Libère la mémoire GPU d'un objet 3D (géométries + matériaux).
+// Les textures partagées sont libérées séparément (textures.dispose()).
+function disposeObject3D(root: THREE.Object3D) {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    if (mat) {
+      for (const m of Array.isArray(mat) ? mat : [mat]) m.dispose();
+    }
+  });
+}
+
+```
+
+
+### Modification 11 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+      for (const ai of aiCars) {
+        scene.remove(ai.rig.root);
+      }
+      aiCars = [];
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+      for (const ai of aiCars) {
+        scene.remove(ai.rig.root);
+        disposeObject3D(ai.rig.root);
+      }
+      aiCars = [];
+```
+
+
+### Modification 12 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+      longitudinalAccelG: 0,
+      lateralVel: 0,
+      steerAngle: 0, // radians
+      steerAngleDeg: 0, // degrees matching Unity CarSteering
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+      longitudinalAccelG: 0,
+      lateralVel: 0,
+      yawRate: 0, // rad/s, vitesse de rotation réelle de la caisse
+      steerAngle: 0, // radians
+      steerAngleDeg: 0, // degrees matching Unity CarSteering
+```
+
+
+### Modification 13 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+      phys.longitudinalAccelG = 0;
+      phys.lateralVel = 0;
+      phys.steerAngle = 0;
+      phys.steerAngleDeg = 0;
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+      phys.longitudinalAccelG = 0;
+      phys.lateralVel = 0;
+      phys.yawRate = 0;
+      phys.steerAngle = 0;
+      phys.steerAngleDeg = 0;
+```
+
+
+### Modification 14 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+      phys.slipAngleDeg = 0;
+      phys.lateralVel = 0;
+      phys.longitudinalAccelG = 0;
+      phys.cameraShake = 0.06;
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+      phys.slipAngleDeg = 0;
+      phys.lateralVel = 0;
+      phys.yawRate = 0;
+      phys.longitudinalAccelG = 0;
+      phys.cameraShake = 0.06;
+```
+
+
+### Modification 15 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+        rebuildFlagRef.current.carDirty = false;
+        scene.remove(playerCar.root);
+        playerCar = buildSportsCarModel(
+          stateRef.current.carSpec,
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+        rebuildFlagRef.current.carDirty = false;
+        scene.remove(playerCar.root);
+        disposeObject3D(playerCar.root);
+        playerCar = buildSportsCarModel(
+          stateRef.current.carSpec,
+```
+
+
+### Modification 16 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+          const isReversing = phys.speedMs < -0.1 || (brakePressed && phys.speedMs < 0.2);
+
+          // 2. Lissage de l'entrée selon la courbe de vitesse (Unity CarSteering: maxAngleBySpeed + steerRate/returnRate)
+          phys.steerAngleDeg = updateCarSteerAngle(
+            phys.steerAngleDeg,
+            steerInput,
+            speedKmh,
+            dt,
+            stateRef.current.settings.steeringSensitivity
+          );
+
+          // 3. Aide au contre-braquage automatique en cas de dérive (Unity CarSteering: counterSteerAssist)
+          const counterSteerDeg = computeCounterSteer(phys.slipAngleDeg, speedAbs, isReversing);
+          const finalAngleDeg = phys.steerAngleDeg + counterSteerDeg;
+
+          // 4. Géométrie d'Ackermann (Unity CarSteering: ApplyAckermann)
+          const ackermann = applyAckermann(finalAngleDeg);
+          phys.frontLeftSteerDeg = ackermann.leftDeg;
+          phys.frontRightSteerDeg = ackermann.rightDeg;
+          phys.steerAngle = ackermann.avgRad;
+
+          // 5. Appui aérodynamique & charge verticale (Unity CarSteering: downforce = 30f)
+          const downforceFactor = 1.0 + (30.0 / 1200.0) * THREE.MathUtils.clamp(speedKmh / 100.0, 0, 2.5);
+          phys.gripFactor = baseSurfaceGrip * downforceFactor;
+
+          // Speed & Acceleration / Braking / Powerful Reverse Gear
+          phys.prevSpeedMs = phys.speedMs;
+          const baseMaxSpeed =
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+          const isReversing = phys.speedMs < -0.1 || (brakePressed && phys.speedMs < 0.2);
+
+          // 5. Appui aérodynamique & charge verticale (Unity CarSteering: downforce = 30f)
+          const downforceFactor = 1.0 + (30.0 / 1200.0) * THREE.MathUtils.clamp(speedKmh / 100.0, 0, 2.5);
+          phys.gripFactor = baseSurfaceGrip * downforceFactor;
+
+          // 6. PHYSIQUE : vitesse avant + latérale, adhérence limitée, sous-pas fixes (120 Hz max)
+          phys.prevSpeedMs = phys.speedMs;
+          const baseMaxSpeed =
+```
+
+
+### Modification 17 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+            phys.surfaceType === 'shoulder' ? Math.min(baseMaxSpeed, 28) : baseMaxSpeed;
+
+          if (canDrive && throttlePressed && !brakePressed) {
+            const accelPower =
+              stateRef.current.carSpec.acceleration *
+              (phys.nitroActive ? 1.6 : 1.0) *
+              Math.max(0.72, phys.gripFactor);
+            // Progressive torque curve
+            const currentRatio = Math.max(0, phys.speedMs) / Math.max(1, maxSpeed);
+            const torqueCurve = Math.max(0.42, 1.0 - Math.pow(currentRatio, 1.8) * 0.58);
+            phys.speedMs = Math.min(maxSpeed, phys.speedMs + accelPower * torqueCurve * dt);
+          } else if (canDrive && brakePressed) {
+            if (phys.speedMs > 0.4) {
+              // Active braking while rolling forward
+              const brakePower = stateRef.current.carSpec.braking * phys.gripFactor * 1.35;
+              phys.speedMs = Math.max(0, phys.speedMs - brakePower * dt);
+            } else {
+              // Powerful, responsive reverse gear to back out of accidents cleanly
+              const reverseAccel = stateRef.current.carSpec.acceleration * 0.85;
+              phys.speedMs = Math.max(-18, phys.speedMs - reverseAccel * dt);
+            }
+          } else {
+            // Natural engine braking & drag
+            const rollingDrag =
+              (0.36 + 0.001 * phys.speedMs * phys.speedMs) *
+              (phys.surfaceType === 'shoulder' ? 2.2 : 1.0);
+            phys.speedMs = THREE.MathUtils.damp(phys.speedMs, 0, rollingDrag, dt);
+          }
+
+          // 6. Kinematic turning rate (Bicycle / Ackermann model)
+          // turnRate = (v / L) * tan(delta)
+          // In Three.js: left turn (steerInput < 0) corresponds to heading increasing (positive)
+          const wheelBase = 2.6;
+          const turnDir = isReversing ? -1 : 1;
+          const turnSign = ackermann.avgRad < 0 ? 1 : -1;
+          const turnRate =
+            (speedAbs / wheelBase) *
+            Math.tan(Math.abs(ackermann.avgRad)) *
+            turnSign *
+            stateRef.current.carSpec.handling *
+            0.52;
+
+          if (speedAbs > 0.02 || throttlePressed || brakePressed) {
+            phys.heading += turnRate * turnDir * dt;
+          }
+
+          // 7. Calcul de l'angle de dérive (slip angle) pour le contre-braquage & drift
+          const lateralAccel = speedAbs * turnRate;
+          phys.lateralVel = THREE.MathUtils.damp(phys.lateralVel, lateralAccel * 0.12, 14.0 * phys.gripFactor, dt);
+          phys.slipAngleDeg = (Math.atan2(phys.lateralVel, Math.max(1.0, speedAbs)) * 180.0) / Math.PI;
+
+          // 8. Electronic Stability Program (ESP) & Direction Assistée
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+            phys.surfaceType === 'shoulder' ? Math.min(baseMaxSpeed, 28) : baseMaxSpeed;
+
+          const dynInput: CarDynInput = {
+            steerInput,
+            throttle: Boolean(throttlePressed),
+            brake: Boolean(brakePressed),
+            canDrive,
+            nitroActive: phys.nitroActive,
+            sensitivity: stateRef.current.settings.steeringSensitivity,
+            gripFactor: phys.gripFactor,
+            maxSpeedMs: maxSpeed,
+            acceleration: stateRef.current.carSpec.acceleration,
+            braking: stateRef.current.carSpec.braking,
+            handling: stateRef.current.carSpec.handling,
+            offRoad: phys.surfaceType === 'shoulder',
+          };
+          stepCarDynamicsSubsteps(phys, dynInput, dt);
+
+          // 8. Electronic Stability Program (ESP) & Direction Assistée
+```
+
+
+### Modification 18 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+            }
+          }
+
+          // Drift detection
+          phys.drifting = Math.abs(steerInput) > 0.55 && speedAbs > 18 && brakePressed;
+
+          // Forward kinematics
+          const forwardX = -Math.sin(phys.heading);
+          const forwardZ = -Math.cos(phys.heading);
+          phys.x += forwardX * phys.speedMs * dt;
+          phys.z += forwardZ * phys.speedMs * dt;
+
+          // Road height & pitch alignment
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+            }
+          }
+
+          // Road height & pitch alignment
+```
+
+
+### Modification 19 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+
+              // 3. Glancing friction (only damp slightly, never kill speed to 0 so the car can keep moving!)
+              phys.speedMs = Math.max(0, phys.speedMs * 0.96);
+
+              if (speedAbs > 9) {
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+
+              // 3. Glancing friction (only damp slightly, never kill speed to 0 so the car can keep moving!)
+              phys.speedMs = Math.max(0, phys.speedMs * Math.exp(-2.45 * dt)); // ≈ 0.96/image à 60 FPS, indépendant des FPS
+
+              if (speedAbs > 9) {
+```
+
+
+### Modification 20 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+              phys.x += nx * overlap;
+              phys.z += nz * overlap;
+              phys.speedMs *= 0.92;
+              soundEngine.playCollision(0.45);
+              phys.cameraShake = 0.18;
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+              phys.x += nx * overlap;
+              phys.z += nz * overlap;
+              phys.speedMs *= Math.exp(-5.0 * dt); // ≈ 0.92/image à 60 FPS, indépendant des FPS
+              soundEngine.playCollision(0.45);
+              phys.cameraShake = 0.18;
+```
+
+
+### Modification 21 — src/components/RacingCanvas.tsx
+
+**ANCIEN CODE** (à chercher et supprimer) :
+```ts
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      soundEngine.updateEngine(0, 0, false, false);
+      builtTrack.dispose();
+      smokeParticles.dispose();
+```
+
+**NOUVEAU CODE** (à mettre à la place) :
+```ts
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      soundEngine.updateEngine(0, 0, false, false);
+      clearAICars();
+      scene.remove(playerCar.root);
+      disposeObject3D(playerCar.root);
+      builtTrack.dispose();
+      smokeParticles.dispose();
+```

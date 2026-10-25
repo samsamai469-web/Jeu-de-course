@@ -1,0 +1,10 @@
+{
+  "name": "Apex Horizon 3D Racing",
+  "short_name": "Apex Horizon",
+  "description": "Jeu de course automobile 3D ultra-fluide avec volant, gyroscope et 5 circuits.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#020617",
+  "theme_color": "#020617"
+}

@@ -247,8 +247,9 @@ export function createMountains(
   isSnowy: boolean,
   textures: ProceduralTextureSet
 ): void {
-  const terrainSize = 2400;
-  const segments = 128;
+  const isStraight = Boolean(spec.isStraight);
+  const terrainSize = isStraight ? 3800 : 2400;
+  const segments = 52;
   const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
   terrainGeo.rotateX(-Math.PI / 2);
 
@@ -307,9 +308,9 @@ export function createMountains(
     } else {
       const nMacro = Math.max(
         0,
-        fbmMountainNoise(vx * 0.0022 + seedOffset, vz * 0.0022 - seedOffset * 0.7, 5)
+        fbmMountainNoise(vx * 0.0022 + seedOffset, vz * 0.0022 - seedOffset * 0.7, 3)
       );
-      const nMid = fbmMountainNoise(vx * 0.0065 + 11.4 + seedOffset, vz * 0.0065 - 7.2, 4);
+      const nMid = fbmMountainNoise(vx * 0.0065 + 11.4 + seedOffset, vz * 0.0065 - 7.2, 2);
       const nDetail = valueNoise2D(vx * 0.025 + seedOffset, vz * 0.025) - 0.5;
 
       const radialDist = Math.hypot(vx, vz);
@@ -354,6 +355,7 @@ export function createMountains(
   });
 
   const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
+  terrainMesh.position.set(0, 0, isStraight ? -1250 : 0);
   terrainMesh.receiveShadow = true;
   group.add(terrainMesh);
 }
@@ -369,8 +371,9 @@ interface LevelRoadTextures {
   dispose: () => void;
 }
 
-function createLevelRoadTextures(spec: TrackSpec): LevelRoadTextures {
+function createLevelRoadTextures(spec: TrackSpec, maxAnisotropy = 16): LevelRoadTextures {
   const lvl = spec.levelNumber;
+  const aniso = Math.max(8, maxAnisotropy);
 
   // 1. Level-Specific Asphalt & Lane Markings Canvas (1024x1024)
   const rCanvas = document.createElement('canvas');
@@ -382,17 +385,17 @@ function createLevelRoadTextures(spec: TrackSpec): LevelRoadTextures {
   reCanvas.width = 1024;
   reCanvas.height = 1024;
   const reCtx = reCanvas.getContext('2d')!;
-  // Bright ambient road base in emissive map so the asphalt ribbon is always clear and visible far ahead
+  // Crisp dark base in emissive map so the white/neon road lines pop with razor-sharp contrast against the tarmac
   reCtx.fillStyle =
     lvl === 2
-      ? '#46423b'
+      ? '#1c1a17'
       : lvl === 3
-      ? '#44362e'
+      ? '#1e1612'
       : lvl === 4
-      ? '#2f3d4c'
+      ? '#111822'
       : lvl === 5
-      ? '#3a3e4a'
-      : '#343c4a';
+      ? '#161820'
+      : '#141923';
   reCtx.fillRect(0, 0, 1024, 1024);
 
   // Much Lighter, Visually Distinct Asphalt Base Gradient per Level
@@ -437,13 +440,13 @@ function createLevelRoadTextures(spec: TrackSpec): LevelRoadTextures {
   rCtx.fillStyle = grad;
   rCtx.fillRect(0, 0, 1024, 1024);
 
-  // Fine mineral aggregate micro-grain (lighter grain for high clarity)
-  for (let i = 0; i < 32000; i++) {
+  // Fine mineral aggregate micro-grain (fast startup)
+  for (let i = 0; i < 1200; i++) {
     const x = Math.random() * 1024;
     const y = Math.random() * 1024;
     const v = 85 + Math.floor(Math.random() * 45);
     rCtx.fillStyle = `rgba(${v}, ${v + 2}, ${v + 5}, 0.28)`;
-    rCtx.fillRect(x, y, 2, 2);
+    rCtx.fillRect(x, y, 4, 4);
   }
 
   // Extra-Wide, High-Visibility Road Markings per Level!
@@ -587,16 +590,18 @@ function createLevelRoadTextures(spec: TrackSpec): LevelRoadTextures {
   roadMap.colorSpace = THREE.SRGBColorSpace;
   roadMap.wrapS = THREE.RepeatWrapping;
   roadMap.wrapT = THREE.RepeatWrapping;
+  roadMap.anisotropy = aniso;
 
   const roadEmissive = new THREE.CanvasTexture(reCanvas);
   roadEmissive.colorSpace = THREE.SRGBColorSpace;
   roadEmissive.wrapS = THREE.RepeatWrapping;
   roadEmissive.wrapT = THREE.RepeatWrapping;
+  roadEmissive.anisotropy = aniso;
 
-  // 2. Level-Specific Curbstone (Vibreurs) Texture (256x256)
+  // 2. Level-Specific Curbstone (Vibreurs) Texture (512x512 for crisp edges)
   const kCanvas = document.createElement('canvas');
-  kCanvas.width = 256;
-  kCanvas.height = 256;
+  kCanvas.width = 512;
+  kCanvas.height = 512;
   const kCtx = kCanvas.getContext('2d')!;
 
   const [kerbPrimary, kerbSecondary] =
@@ -611,17 +616,18 @@ function createLevelRoadTextures(spec: TrackSpec): LevelRoadTextures {
       : ['#dc2626', '#ffffff']; // Level 5: Grand Prix Crimson Red & White
 
   kCtx.fillStyle = kerbPrimary;
-  kCtx.fillRect(0, 0, 256, 128);
+  kCtx.fillRect(0, 0, 512, 256);
   kCtx.fillStyle = kerbSecondary;
-  kCtx.fillRect(0, 128, 256, 128);
+  kCtx.fillRect(0, 256, 512, 256);
   kCtx.fillStyle = '#0f172a';
-  kCtx.fillRect(0, 122, 256, 6);
-  kCtx.fillRect(0, 250, 256, 6);
+  kCtx.fillRect(0, 246, 512, 10);
+  kCtx.fillRect(0, 502, 512, 10);
 
   const kerbMap = new THREE.CanvasTexture(kCanvas);
   kerbMap.colorSpace = THREE.SRGBColorSpace;
   kerbMap.wrapS = THREE.RepeatWrapping;
   kerbMap.wrapT = THREE.RepeatWrapping;
+  kerbMap.anisotropy = aniso;
 
   // 3. Level-Specific Overhead Gantry Sign Texture (1024x256)
   const gCanvas = document.createElement('canvas');
@@ -664,6 +670,7 @@ function createLevelRoadTextures(spec: TrackSpec): LevelRoadTextures {
 
   const gantryMap = new THREE.CanvasTexture(gCanvas);
   gantryMap.colorSpace = THREE.SRGBColorSpace;
+  gantryMap.anisotropy = aniso;
 
   return {
     roadMap,
@@ -724,27 +731,38 @@ export function createTrack(
   const grassUvs: number[] = [];
   const grassIndices: number[] = [];
 
-  for (let i = 0; i <= sampleCount; i++) {
-    const idx = i % sampleCount;
+  const CROSS_DIVS = 4;
+  const isStraight = Boolean(spec.isStraight);
+  const numSteps = isStraight ? sampleCount - 1 : sampleCount;
+
+  for (let i = 0; i <= numSteps; i++) {
+    const idx = Math.min(i, sampleCount - 1);
     const s = samples[idx];
     const roadY = s.point.y + 0.04;
-    const vCoord = (i / sampleCount) * (totalLength / 14);
+    const vCoord = (i / numSteps) * (totalLength / 14);
 
-    const leftEdgeX = s.point.x - s.normal.x * halfW;
-    const leftEdgeZ = s.point.z - s.normal.z * halfW;
-    const rightEdgeX = s.point.x + s.normal.x * halfW;
-    const rightEdgeZ = s.point.z + s.normal.z * halfW;
+    // Subdivide road into 4 cross-sections to eliminate diagonal twisting/creases
+    for (let c = 0; c <= CROSS_DIVS; c++) {
+      const u = c / CROSS_DIVS;
+      const latOffset = -halfW + u * (halfW * 2);
+      const rx = s.point.x + s.normal.x * latOffset;
+      const rz = s.point.z + s.normal.z * latOffset;
+      const crown = Math.sin(u * Math.PI) * 0.015;
+      roadPositions.push(rx, roadY + crown, rz);
+      roadNormals.push(0, 1, 0);
+      roadUvs.push(u, vCoord);
+    }
 
-    roadPositions.push(leftEdgeX, roadY, leftEdgeZ, rightEdgeX, roadY, rightEdgeZ);
-    roadNormals.push(0, 1, 0, 0, 1, 0);
-    roadUvs.push(0, vCoord, 1, vCoord);
-
-    const isCorner = Math.abs(s.curvature) > 0.0028;
-    const kerbLift = isCorner ? 0.08 : 0.035;
+    const cornerFactor = THREE.MathUtils.clamp(Math.abs(s.curvature) / 0.0035, 0, 1);
+    const kerbLift = 0.025 + cornerFactor * 0.035;
     const leftKerbOuterX = s.point.x - s.normal.x * (halfW + kerbW);
     const leftKerbOuterZ = s.point.z - s.normal.z * (halfW + kerbW);
     const rightKerbOuterX = s.point.x + s.normal.x * (halfW + kerbW);
     const rightKerbOuterZ = s.point.z + s.normal.z * (halfW + kerbW);
+    const leftEdgeX = s.point.x - s.normal.x * halfW;
+    const leftEdgeZ = s.point.z - s.normal.z * halfW;
+    const rightEdgeX = s.point.x + s.normal.x * halfW;
+    const rightEdgeZ = s.point.z + s.normal.z * halfW;
 
     const kV = (i / sampleCount) * (totalLength / 2.6);
     kerbPositions.push(
@@ -752,10 +770,10 @@ export function createTrack(
       roadY + kerbLift,
       leftKerbOuterZ,
       leftEdgeX,
-      roadY + 0.01,
+      roadY + 0.005,
       leftEdgeZ,
       rightEdgeX,
-      roadY + 0.01,
+      roadY + 0.005,
       rightEdgeZ,
       rightKerbOuterX,
       roadY + kerbLift,
@@ -764,7 +782,7 @@ export function createTrack(
     kerbNormals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
     kerbUvs.push(0, kV, 1, kV, 1, kV, 0, kV);
 
-    const cBright = isCorner ? 1.0 : 0.72;
+    const cBright = 0.75 + cornerFactor * 0.25;
     for (let k = 0; k < 4; k++) {
       kerbColors.push(cBright, cBright, cBright);
     }
@@ -778,16 +796,16 @@ export function createTrack(
     const gvV = (i / sampleCount) * (totalLength / 5.0);
     gravelPositions.push(
       leftGravelOuterX,
-      roadY - 0.08,
+      roadY - 0.06,
       leftGravelOuterZ,
       leftKerbOuterX,
-      roadY + 0.03,
+      roadY + 0.015,
       leftKerbOuterZ,
       rightKerbOuterX,
-      roadY + 0.03,
+      roadY + 0.015,
       rightKerbOuterZ,
       rightGravelOuterX,
-      roadY - 0.08,
+      roadY - 0.06,
       rightGravelOuterZ
     );
     gravelNormals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
@@ -802,24 +820,31 @@ export function createTrack(
     const grV = (i / sampleCount) * (totalLength / 8.0);
     grassPositions.push(
       leftGrassOuterX,
-      roadY - 0.48,
+      roadY - 0.35,
       leftGrassOuterZ,
       leftGravelOuterX,
-      roadY - 0.08,
+      roadY - 0.06,
       leftGravelOuterZ,
       rightGravelOuterX,
-      roadY - 0.08,
+      roadY - 0.06,
       rightGravelOuterZ,
       rightGrassOuterX,
-      roadY - 0.48,
+      roadY - 0.35,
       rightGrassOuterZ
     );
     grassNormals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
     grassUvs.push(0, grV, 1, grV, 0, grV, 1, grV);
 
-    if (i < sampleCount) {
-      const rBase = i * 2;
-      roadIndices.push(rBase, rBase + 1, rBase + 2, rBase + 1, rBase + 3, rBase + 2);
+    if (i < numSteps) {
+      const row0 = i * (CROSS_DIVS + 1);
+      const row1 = (i + 1) * (CROSS_DIVS + 1);
+      for (let c = 0; c < CROSS_DIVS; c++) {
+        const p00 = row0 + c;
+        const p10 = row0 + c + 1;
+        const p01 = row1 + c;
+        const p11 = row1 + c + 1;
+        roadIndices.push(p00, p01, p10, p10, p01, p11);
+      }
 
       const kBase = i * 4;
       kerbIndices.push(kBase, kBase + 1, kBase + 4, kBase + 1, kBase + 5, kBase + 4);
@@ -839,6 +864,7 @@ export function createTrack(
   roadGeo.setAttribute('normal', new THREE.Float32BufferAttribute(roadNormals, 3));
   roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(roadUvs, 2));
   roadGeo.setIndex(roadIndices);
+  roadGeo.computeVertexNormals();
   roadGeo.computeTangents();
 
   const roadRoughness = isRainy || lvl === 4 ? 0.48 : lvl === 5 ? 0.62 : 0.68;
@@ -848,13 +874,13 @@ export function createTrack(
     map: levelTex.roadMap,
     color: 0xffffff,
     normalMap: textures.roadNormalMap,
-    normalScale: new THREE.Vector2(0.24, 0.24),
+    normalScale: new THREE.Vector2(0.06, 0.06),
     roughnessMap: textures.roadRoughnessMap,
     roughness: roadRoughness,
     metalness: roadMetalness,
     emissive: new THREE.Color(0xffffff),
     emissiveMap: levelTex.roadEmissive,
-    emissiveIntensity: isNight ? 0.85 : 0.62,
+    emissiveIntensity: isNight ? 0.92 : 0.68,
     envMapIntensity: isRainy || lvl === 4 ? 0.55 : 0.35,
   });
   const roadMesh = new THREE.Mesh(roadGeo, roadMat);
@@ -868,6 +894,7 @@ export function createTrack(
   kerbGeo.setAttribute('uv', new THREE.Float32BufferAttribute(kerbUvs, 2));
   kerbGeo.setAttribute('color', new THREE.Float32BufferAttribute(kerbColors, 3));
   kerbGeo.setIndex(kerbIndices);
+  kerbGeo.computeVertexNormals();
 
   const kerbMat = new THREE.MeshStandardMaterial({
     map: levelTex.kerbMap,
@@ -945,16 +972,17 @@ export function createTrack(
   grassMesh.receiveShadow = true;
   group.add(grassMesh);
 
-  // Start / Finish Checkered Line at Sample 0
-  const startSample = samples[0];
+  // Start Checkered Line at Sample 10
+  const startIdx = isStraight ? 10 : 0;
+  const startSample = samples[startIdx];
   const startAngle = Math.atan2(startSample.tangent.x, startSample.tangent.z);
-  const startLineGeo = new THREE.PlaneGeometry(spec.roadWidth * 0.86, 2.6);
+  const startLineGeo = new THREE.PlaneGeometry(spec.roadWidth * 0.94, 3.2);
   const startLineMesh = new THREE.Mesh(
     startLineGeo,
     new THREE.MeshBasicMaterial({
       map: textures.checkeredTexture,
       transparent: true,
-      opacity: 0.92,
+      opacity: 0.94,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
@@ -963,6 +991,27 @@ export function createTrack(
   startLineMesh.position.set(startSample.point.x, startSample.point.y + 0.06, startSample.point.z);
   startLineMesh.rotation.set(-Math.PI / 2, 0, startAngle);
   group.add(startLineMesh);
+
+  // Finish Checkered Line near the end of the straight road
+  if (isStraight) {
+    const finishIdx = sampleCount - 15;
+    const finishSample = samples[finishIdx];
+    const finishAngle = Math.atan2(finishSample.tangent.x, finishSample.tangent.z);
+    const finishLineMesh = new THREE.Mesh(
+      startLineGeo,
+      new THREE.MeshBasicMaterial({
+        map: textures.checkeredTexture,
+        transparent: true,
+        opacity: 0.96,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      })
+    );
+    finishLineMesh.position.set(finishSample.point.x, finishSample.point.y + 0.06, finishSample.point.z);
+    finishLineMesh.rotation.set(-Math.PI / 2, 0, finishAngle);
+    group.add(finishLineMesh);
+  }
 
   return { halfW, kerbW, railOffset, outerShoulderOffset };
 }
@@ -991,13 +1040,15 @@ export function createRoadsideProps(
   const isNight = timeOfDay === 'night';
 
   // 5a. Level-Styled Guardrails (Glissières de sécurité)
+  const isStraight = Boolean(spec.isStraight);
+  const numSteps = isStraight ? sampleCount - 1 : sampleCount;
   const railPositions: number[] = [];
   const railNormals: number[] = [];
   const railUvs: number[] = [];
   const railIndices: number[] = [];
 
-  for (let i = 0; i <= sampleCount; i++) {
-    const idx = i % sampleCount;
+  for (let i = 0; i <= numSteps; i++) {
+    const idx = Math.min(i, sampleCount - 1);
     const s = samples[idx];
     const roadY = s.point.y + 0.04;
     const leftRailX = s.point.x - s.normal.x * railOffset;
@@ -1005,7 +1056,7 @@ export function createRoadsideProps(
     const rightRailX = s.point.x + s.normal.x * railOffset;
     const rightRailZ = s.point.z + s.normal.z * railOffset;
 
-    const rV = (i / sampleCount) * (totalLength / 4.0);
+    const rV = (i / numSteps) * (totalLength / 4.0);
     railPositions.push(
       leftRailX,
       roadY + 0.42,
@@ -1036,7 +1087,7 @@ export function createRoadsideProps(
     );
     railUvs.push(rV, 1, rV, 0, rV, 1, rV, 0);
 
-    if (i < sampleCount) {
+    if (i < numSteps) {
       const kBase = i * 4;
       railIndices.push(kBase, kBase + 1, kBase + 4, kBase + 1, kBase + 5, kBase + 4);
       railIndices.push(kBase + 2, kBase + 6, kBase + 3, kBase + 3, kBase + 6, kBase + 7);
@@ -1367,6 +1418,9 @@ export function createRoadsideProps(
 
   buildGantry(10);
   buildGantry(Math.floor(sampleCount * 0.5));
+  if (isStraight) {
+    buildGantry(sampleCount - 15);
+  }
 
   // 5f. UNIQUE LEVEL ARCHITECTURAL LANDMARKS ALONG THE ROAD
   if (lvl === 1) {
@@ -1710,8 +1764,8 @@ export function createTrees(
   textures: ProceduralTextureSet
 ): void {
   const dummy = new THREE.Object3D();
-  const pineCountTarget = qualityTier === 'low' ? 180 : qualityTier === 'medium' ? 280 : 380;
-  const bushCountTarget = qualityTier === 'low' ? 160 : qualityTier === 'medium' ? 260 : 360;
+  const pineCountTarget = qualityTier === 'low' ? 95 : qualityTier === 'medium' ? 160 : 260;
+  const bushCountTarget = qualityTier === 'low' ? 85 : qualityTier === 'medium' ? 140 : 240;
 
   const pineTransforms: Array<{ x: number; y: number; z: number; sx: number; sy: number; rot: number; tint: THREE.Color }> = [];
   const bushTransforms: Array<{ x: number; y: number; z: number; sx: number; sy: number; rot: number; tint: THREE.Color }> = [];
@@ -1866,58 +1920,65 @@ export function buildTrackEnvironment(
   const isSnowy = biome === 'snow' || weather === 'snow';
   const isRainy = weather === 'rain';
 
-  // Generate Level-Specific Road, Markings, Curbs & Gantry Textures
-  const levelTex = createLevelRoadTextures(spec);
+  // Generate Level-Specific Road, Markings, Curbs & Gantry Textures with Max Anisotropy
+  const levelTex = createLevelRoadTextures(spec, textures.roadTexture.anisotropy || 16);
 
   // 1. Sky Dome & Starfield (createSky) - follows camera in render loop
   const skyGroup = createSky(group, timeOfDay, biome, weather, textures);
 
-  // 2. Closed 3D CatmullRomCurve3 & Curvature Computation
+  // 2. 3D CatmullRomCurve3 & Curvature Computation (Straight highway or loop)
+  const isStraight = Boolean(spec.isStraight);
   const controlPoints = spec.waypoints.map(([x, y, z]) => new THREE.Vector3(x, y, z));
-  const curve = new THREE.CatmullRomCurve3(controlPoints, true, 'centripetal', 0.5);
+  const curve = new THREE.CatmullRomCurve3(controlPoints, !isStraight, 'centripetal', 0.25);
   const totalLength = curve.getLength();
 
-  const sampleCount = 480;
+  // High-density sampling (640 samples) produces ultra-smooth ribbon geometry with zero angular faceting
+  const sampleCount = 640;
   const samples: TrackSample[] = [];
   const minimapPoints: Array<{ x: number; z: number }> = [];
 
   for (let i = 0; i < sampleCount; i++) {
-    const t = i / sampleCount;
-    const tPrev = ((i - 2 + sampleCount) % sampleCount) / sampleCount;
-    const tNext = ((i + 2) % sampleCount) / sampleCount;
+    const t = isStraight ? i / (sampleCount - 1) : i / sampleCount;
+    const tPrev = ((i - 3 + sampleCount) % sampleCount) / sampleCount;
+    const tNext = ((i + 3) % sampleCount) / sampleCount;
     const point = curve.getPointAt(t);
-    const tangent = curve.getTangentAt(t).normalize();
-    const tangPrev = curve.getTangentAt(tPrev);
-    const tangNext = curve.getTangentAt(tNext);
-    const curvature = tangNext.x * tangPrev.z - tangNext.z * tangPrev.x;
+    const tangent = isStraight
+      ? new THREE.Vector3(0, 0, -1)
+      : curve.getTangentAt(t).normalize();
+    const tangPrev = isStraight ? tangent : curve.getTangentAt(tPrev);
+    const tangNext = isStraight ? tangent : curve.getTangentAt(tNext);
+    const curvature = isStraight ? 0 : tangNext.x * tangPrev.z - tangNext.z * tangPrev.x;
 
-    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+    const normal = isStraight
+      ? new THREE.Vector3(1, 0, 0)
+      : new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
     samples.push({ point, tangent, normal, pitch: 0, curvature, t });
-    if (i % 6 === 0) {
+    if (i % 8 === 0) {
       minimapPoints.push({ x: point.x, z: point.z });
     }
   }
 
-  // Smooth vertical elevation profile across closed loop to eliminate any spline Y oscillation
-  for (let pass = 0; pass < 6; pass++) {
+  // Multi-pass wide Gaussian elevation filter (16 passes, 9-point kernel) guarantees ultra-planar, ripple-free road surface
+  const kernel9 = [0.02, 0.06, 0.12, 0.2, 0.2, 0.2, 0.12, 0.06, 0.02];
+  for (let pass = 0; pass < 16; pass++) {
     const smoothedY = new Float32Array(sampleCount);
     for (let i = 0; i < sampleCount; i++) {
-      const ym2 = samples[(i - 2 + sampleCount) % sampleCount].point.y;
-      const ym1 = samples[(i - 1 + sampleCount) % sampleCount].point.y;
-      const y0 = samples[i].point.y;
-      const yp1 = samples[(i + 1) % sampleCount].point.y;
-      const yp2 = samples[(i + 2) % sampleCount].point.y;
-      smoothedY[i] = ym2 * 0.1 + ym1 * 0.25 + y0 * 0.3 + yp1 * 0.25 + yp2 * 0.1;
+      let sum = 0;
+      for (let k = -4; k <= 4; k++) {
+        const idx = (i + k + sampleCount) % sampleCount;
+        sum += samples[idx].point.y * kernel9[k + 4];
+      }
+      smoothedY[i] = sum;
     }
     for (let i = 0; i < sampleCount; i++) {
       samples[i].point.y = smoothedY[i];
     }
   }
 
-  // Compute gentle, rock-steady longitudinal pitch from smoothed elevation
+  // Compute gentle, rock-steady longitudinal pitch from smoothed elevation (~14m baseline)
   for (let i = 0; i < sampleCount; i++) {
-    const prevS = samples[(i - 3 + sampleCount) % sampleCount];
-    const nextS = samples[(i + 3) % sampleCount];
+    const prevS = samples[(i - 6 + sampleCount) % sampleCount];
+    const nextS = samples[(i + 6) % sampleCount];
     const dx = nextS.point.x - prevS.point.x;
     const dy = nextS.point.y - prevS.point.y;
     const dz = nextS.point.z - prevS.point.z;
@@ -1925,14 +1986,16 @@ export function buildTrackEnvironment(
     samples[i].pitch = THREE.MathUtils.clamp(Math.atan2(dy, horizDist), -0.045, 0.045);
   }
 
-  // Smooth pitch across adjacent samples so cars never rock or pitch abruptly
-  for (let pass = 0; pass < 3; pass++) {
+  // Smooth pitch across adjacent samples (8 passes) so cars never rock or pitch abruptly
+  for (let pass = 0; pass < 8; pass++) {
     const smoothedPitch = new Float32Array(sampleCount);
     for (let i = 0; i < sampleCount; i++) {
+      const pm2 = samples[(i - 2 + sampleCount) % sampleCount].pitch;
       const pm1 = samples[(i - 1 + sampleCount) % sampleCount].pitch;
       const p0 = samples[i].pitch;
       const pp1 = samples[(i + 1) % sampleCount].pitch;
-      smoothedPitch[i] = pm1 * 0.25 + p0 * 0.5 + pp1 * 0.25;
+      const pp2 = samples[(i + 2) % sampleCount].pitch;
+      smoothedPitch[i] = pm2 * 0.1 + pm1 * 0.25 + p0 * 0.3 + pp1 * 0.25 + pp2 * 0.1;
     }
     for (let i = 0; i < sampleCount; i++) {
       samples[i].pitch = smoothedPitch[i];
@@ -1965,6 +2028,24 @@ export function buildTrackEnvironment(
   };
 
   const getSampleAtT = (rawT: number): TrackSample => {
+    if (isStraight) {
+      const normT = THREE.MathUtils.clamp(rawT, 0, 1);
+      const exactIdx = normT * (sampleCount - 1);
+      const idx0 = Math.min(sampleCount - 1, Math.floor(exactIdx));
+      const idx1 = Math.min(sampleCount - 1, idx0 + 1);
+      const alpha = exactIdx - Math.floor(exactIdx);
+      const s0 = samples[idx0];
+      const s1 = samples[idx1];
+
+      tInterpPoint.lerpVectors(s0.point, s1.point, alpha);
+      tInterpTangent.set(0, 0, -1);
+      tInterpNormal.set(1, 0, 0);
+      tInterpSample.pitch = 0;
+      tInterpSample.curvature = 0;
+      tInterpSample.t = normT;
+      return tInterpSample;
+    }
+
     const normT = ((rawT % 1) + 1) % 1;
     const exactIdx = normT * sampleCount;
     const idx0 = Math.floor(exactIdx) % sampleCount;
@@ -1983,15 +2064,59 @@ export function buildTrackEnvironment(
   };
 
   const getClosestSample = (x: number, z: number) => {
-    let bestIdx = 0;
+    if (isStraight) {
+      const startZ = samples[0].point.z;
+      const endZ = samples[sampleCount - 1].point.z;
+      const lengthZ = startZ - endZ;
+      const clampedZ = THREE.MathUtils.clamp(z, endZ, startZ);
+      const t = lengthZ > 0.001 ? (startZ - clampedZ) / lengthZ : 0;
+      const exactIdx = t * (sampleCount - 1);
+      const idx0 = Math.min(sampleCount - 1, Math.floor(exactIdx));
+      const idx1 = Math.min(sampleCount - 1, idx0 + 1);
+      const alpha = exactIdx - Math.floor(exactIdx);
+
+      const s0 = samples[idx0];
+      const s1 = samples[idx1];
+      interpPoint.lerpVectors(s0.point, s1.point, alpha);
+      interpTangent.set(0, 0, -1);
+      interpNormal.set(1, 0, 0);
+      interpSample.pitch = 0;
+      interpSample.curvature = 0;
+      interpSample.t = t;
+
+      const dx = x - interpPoint.x;
+      const dz = z - interpPoint.z;
+      const distSq = dx * dx + dz * dz;
+
+      return {
+        sample: interpSample,
+        distSq,
+        signedLateralDist: dx,
+        index: idx0,
+      };
+    }
+
+    let coarseIdx = 0;
     let bestDistSq = Infinity;
-    for (let i = 0; i < samples.length; i++) {
+    const coarseStep = 16;
+    for (let i = 0; i < sampleCount; i += coarseStep) {
       const dx = x - samples[i].point.x;
       const dz = z - samples[i].point.z;
       const dSq = dx * dx + dz * dz;
       if (dSq < bestDistSq) {
         bestDistSq = dSq;
-        bestIdx = i;
+        coarseIdx = i;
+      }
+    }
+    let bestIdx = coarseIdx;
+    for (let offset = -coarseStep; offset <= coarseStep; offset++) {
+      const idx = (coarseIdx + offset + sampleCount) % sampleCount;
+      const dx = x - samples[idx].point.x;
+      const dz = z - samples[idx].point.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        bestIdx = idx;
       }
     }
     const s0 = samples[bestIdx];
@@ -2027,7 +2152,7 @@ export function buildTrackEnvironment(
   };
 
   // 3. Valley Floor Ground Plane
-  const groundGeo = new THREE.PlaneGeometry(2800, 2800);
+  const groundGeo = new THREE.PlaneGeometry(isStraight ? 3800 : 2800, isStraight ? 3800 : 2800);
   const groundMat = new THREE.MeshStandardMaterial({
     map: isSnowy ? textures.mountainRockTexture : textures.grassGroundTexture,
     color:
@@ -2048,7 +2173,7 @@ export function buildTrackEnvironment(
   });
   const groundMesh = new THREE.Mesh(groundGeo, groundMat);
   groundMesh.rotation.x = -Math.PI / 2;
-  groundMesh.position.y = -2.6;
+  groundMesh.position.set(0, -2.6, isStraight ? -1250 : 0);
   groundMesh.receiveShadow = true;
   group.add(groundMesh);
 

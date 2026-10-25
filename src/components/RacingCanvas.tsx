@@ -17,6 +17,7 @@ import { buildSportsCarModel, CarRig } from '../engine/carBuilder';
 import { buildTrackEnvironment, BuiltTrack } from '../engine/trackBuilder';
 import { ParticlePool } from '../engine/particles';
 import { soundEngine } from '../audio/soundEngine';
+import { stepCarDynamicsSubsteps, type CarDynInput } from '../engine/carPhysics';
 
 export interface TouchInputState {
   throttle: boolean;
@@ -28,6 +29,7 @@ export interface TouchInputState {
   lookBack?: boolean;
   shiftUpQueued?: boolean;
   shiftDownQueued?: boolean;
+  respawnQueued?: boolean;
 }
 
 interface RacingCanvasProps {
@@ -84,6 +86,28 @@ const AI_NAMES = [
   'D. Silva',
 ];
 const AI_COLORS = ['#2563eb', '#9333ea', '#e11d48', '#eab308', '#0d9488', '#ea580c', '#16a34a'];
+
+// La physique de la voiture (direction, Ackermann, adhérence, dérapage) vit dans
+// src/engine/carPhysics.ts. On re-exporte ces fonctions pour rester compatible.
+export {
+  evalMaxAngleBySpeed,
+  updateCarSteerAngle,
+  computeCounterSteer,
+  applyAckermann,
+} from '../engine/carPhysics';
+
+// Libère la mémoire GPU d'un objet 3D (géométries + matériaux).
+// Les textures partagées sont libérées séparément (textures.dispose()).
+function disposeObject3D(root: THREE.Object3D) {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    if (mat) {
+      for (const m of Array.isArray(mat) ? mat : [mat]) m.dispose();
+    }
+  });
+}
 
 export const RacingCanvas: React.FC<RacingCanvasProps> = ({
   carSpec,
@@ -180,29 +204,38 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
     })();
 
-    const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
+    const isMobileDevice =
+      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      window.matchMedia('(pointer: coarse)').matches;
 
     const resolveQualityTier = (preset: GameSettings['quality']): 'high' | 'medium' | 'low' => {
       if (preset !== 'auto') return preset;
       if (isSoftwareGl) return 'low';
-      if (isMobileDevice) return 'low';
+      if (isMobileDevice) return 'medium';
       return 'high';
     };
 
     let activeQualityTier = resolveQualityTier(stateRef.current.settings.quality);
 
+    const getTargetPixelRatio = (tier: 'high' | 'medium' | 'low') => {
+      if (isSoftwareGl) return 1;
+      const dpr = window.devicePixelRatio || 1;
+      if (tier === 'low') return Math.min(dpr, 1.5);
+      if (tier === 'medium') return Math.min(dpr, 2.0);
+      return Math.min(dpr, 2.5);
+    };
+
     const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl && activeQualityTier !== 'low',
+      antialias: !isSoftwareGl,
       powerPreference: 'high-performance',
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.4;
+    renderer.toneMappingExposure = 1.45;
 
-    const maxPixelRatio = isSoftwareGl || isMobileDevice ? 1 : activeQualityTier === 'low' ? 1 : activeQualityTier === 'medium' ? 1.5 : 2;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
-    renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
-    renderer.shadowMap.enabled = !isSoftwareGl && activeQualityTier !== 'low';
+    renderer.setPixelRatio(getTargetPixelRatio(activeQualityTier));
+    renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight, true);
+    renderer.shadowMap.enabled = !isSoftwareGl && !isMobileDevice && activeQualityTier === 'high';
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     container.innerHTML = '';
@@ -250,18 +283,21 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     );
     outdoorEnvScene.add(envDomeMesh);
 
-    // Subtle bright horizon reflection strips inside PMREM scene for crisp automotive clearcoat highlights
-    const stripGeo = new THREE.PlaneGeometry(14, 1.4);
-    const stripMat = new THREE.MeshBasicMaterial({ color: 0x93c5fd, side: THREE.DoubleSide });
+    // Bright horizon & overhead softbox reflection strips inside PMREM scene for crisp automotive clearcoat highlights
+    const stripGeo = new THREE.PlaneGeometry(16, 1.8);
+    const stripMat = new THREE.MeshBasicMaterial({ color: 0xe0f2fe, side: THREE.DoubleSide });
     const strip1 = new THREE.Mesh(stripGeo, stripMat);
-    strip1.position.set(0, 7, -14);
+    strip1.position.set(0, 8, -13);
     strip1.lookAt(0, 0, 0);
     const strip2 = new THREE.Mesh(stripGeo, new THREE.MeshBasicMaterial({ color: 0xfef08a, side: THREE.DoubleSide }));
-    strip2.position.set(12, 5, 8);
+    strip2.position.set(12, 6, 8);
     strip2.lookAt(0, 0, 0);
-    outdoorEnvScene.add(strip1, strip2);
+    const strip3 = new THREE.Mesh(stripGeo, new THREE.MeshBasicMaterial({ color: 0xbae6fd, side: THREE.DoubleSide }));
+    strip3.position.set(-12, 6, 6);
+    strip3.lookAt(0, 0, 0);
+    outdoorEnvScene.add(strip1, strip2, strip3);
 
-    const envMapTexture = pmremGenerator.fromScene(outdoorEnvScene, 0.03).texture;
+    const envMapTexture = pmremGenerator.fromScene(outdoorEnvScene, 0.025).texture;
     scene.environment = envMapTexture;
     envDomeGeo.dispose();
     stripGeo.dispose();
@@ -277,9 +313,9 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
     const keyLight = new THREE.DirectionalLight(0xa5c8ff, 1.15);
     keyLight.position.set(60, 95, 45);
-    keyLight.castShadow = !isSoftwareGl && activeQualityTier !== 'low';
-    keyLight.shadow.mapSize.width = activeQualityTier === 'high' ? 2048 : 1024;
-    keyLight.shadow.mapSize.height = activeQualityTier === 'high' ? 2048 : 1024;
+    keyLight.castShadow = !isSoftwareGl && !isMobileDevice && activeQualityTier === 'high';
+    keyLight.shadow.mapSize.width = 1024;
+    keyLight.shadow.mapSize.height = 1024;
     const shadowBound = 68;
     keyLight.shadow.camera.left = -shadowBound;
     keyLight.shadow.camera.right = shadowBound;
@@ -296,12 +332,18 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     rimLight.position.set(-55, 45, -65);
     scene.add(rimLight);
 
-    // Pooled Real Streetlamp PointLights (4 dynamic lights moving to the closest streetlamps for 60 FPS mobile performance)
-    const lampLightPoolSize = isSoftwareGl ? 2 : 4;
+    // Dedicated Luxury Showroom Car Keylight (Hotel Showroom Clearcoat Reflections)
+    const carShowroomLight = new THREE.DirectionalLight(0xffffff, 2.2);
+    carShowroomLight.position.set(0, 16, 0);
+    scene.add(carShowroomLight);
+    scene.add(carShowroomLight.target);
+
+    // Pooled Streetlamp PointLights (disabled on mobile for 60 FPS shader speed; emissive road + halos handle mobile glow)
+    const lampLightPoolSize = !isSoftwareGl && !isMobileDevice && activeQualityTier === 'high' ? 2 : 0;
     const lampPointLights: THREE.PointLight[] = [];
     for (let i = 0; i < lampLightPoolSize; i++) {
       const pl = new THREE.PointLight(0xfef08a, 6.8, 38, 1.7);
-      pl.castShadow = false; // Keep shadow count strictly bounded for 60 FPS mobile
+      pl.castShadow = false;
       scene.add(pl);
       lampPointLights.push(pl);
     }
@@ -309,61 +351,61 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     const applySkyAndLighting = (timeOfDay: GameSettings['timeOfDay'], weather: GameSettings['weather']) => {
       const lvl = stateRef.current.trackSpec.levelNumber;
       let fogColor = 0x162b52;
-      let fogDensity = 0.0016;
+      let fogDensity = 0.00055;
 
       if (timeOfDay === 'morning') {
         // Bright Sunlit Morning (Level 2 default)
         scene.background = new THREE.Color(0x38bdf8);
         fogColor = 0x7dd3fc;
-        fogDensity = 0.0012;
+        fogDensity = 0.00042;
         ambientLight.color.setHex(0x64748b);
-        ambientLight.intensity = 0.92;
+        ambientLight.intensity = 0.95;
         hemiLight.color.setHex(0xbae6fd);
         hemiLight.groundColor.setHex(0x3f4d34);
-        hemiLight.intensity = 0.95;
+        hemiLight.intensity = 0.98;
         keyLight.color.setHex(0xfef08a);
-        keyLight.intensity = 1.65;
-        renderer.toneMappingExposure = 1.55;
+        keyLight.intensity = 1.7;
+        renderer.toneMappingExposure = 1.52;
       } else if (timeOfDay === 'afternoon') {
         // Crisp Daylight Blue
         scene.background = new THREE.Color(0x2563eb);
         fogColor = 0x60a5fa;
-        fogDensity = 0.0012;
+        fogDensity = 0.00042;
         ambientLight.color.setHex(0x64748b);
-        ambientLight.intensity = 0.9;
+        ambientLight.intensity = 0.92;
         hemiLight.color.setHex(0x93c5fd);
         hemiLight.groundColor.setHex(0x334155);
-        hemiLight.intensity = 0.92;
+        hemiLight.intensity = 0.95;
         keyLight.color.setHex(0xffffff);
-        keyLight.intensity = 1.65;
-        renderer.toneMappingExposure = 1.55;
+        keyLight.intensity = 1.7;
+        renderer.toneMappingExposure = 1.52;
       } else if (timeOfDay === 'sunset') {
         // Golden Amber Canyon Sunset (Level 3 default)
         scene.background = new THREE.Color(0x7c2d12);
         fogColor = 0xc2410c;
-        fogDensity = 0.0015;
+        fogDensity = 0.00052;
         ambientLight.color.setHex(0x78350f);
-        ambientLight.intensity = 0.85;
+        ambientLight.intensity = 0.88;
         hemiLight.color.setHex(0xfdba74);
         hemiLight.groundColor.setHex(0x431407);
-        hemiLight.intensity = 0.9;
+        hemiLight.intensity = 0.92;
         keyLight.color.setHex(0xfb923c);
-        keyLight.intensity = 1.55;
-        renderer.toneMappingExposure = 1.52;
+        keyLight.intensity = 1.62;
+        renderer.toneMappingExposure = 1.5;
       } else {
         // Clear, Luminous Cobalt Night (Levels 1, 4, 5)
         const nightTint = lvl === 5 ? 0x1e1b4b : lvl === 4 ? 0x0f294a : 0x15284d;
         scene.background = new THREE.Color(nightTint);
         fogColor = nightTint;
-        fogDensity = 0.0016;
+        fogDensity = 0.00058;
         ambientLight.color.setHex(0x334b78);
-        ambientLight.intensity = 0.82;
+        ambientLight.intensity = 0.86;
         hemiLight.color.setHex(0x60a5fa);
         hemiLight.groundColor.setHex(0x1e293b);
-        hemiLight.intensity = 0.88;
+        hemiLight.intensity = 0.92;
         keyLight.color.setHex(0xbfdbfe);
-        keyLight.intensity = 1.42;
-        renderer.toneMappingExposure = 1.55;
+        keyLight.intensity = 1.48;
+        renderer.toneMappingExposure = 1.52;
       }
 
       const lampIntensity = timeOfDay === 'night' ? 7.5 : timeOfDay === 'sunset' ? 5.2 : 2.5;
@@ -372,13 +414,13 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       }
 
       if (weather === 'fog') {
-        fogDensity = 0.0022;
+        fogDensity = 0.0014;
         keyLight.intensity *= 0.92;
       } else if (weather === 'rain') {
-        fogDensity = 0.0018;
+        fogDensity = 0.00095;
         keyLight.intensity *= 0.95;
       } else if (weather === 'snow') {
-        fogDensity = 0.0018;
+        fogDensity = 0.00095;
         keyLight.intensity *= 0.95;
       }
 
@@ -451,6 +493,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     const clearAICars = () => {
       for (const ai of aiCars) {
         scene.remove(ai.rig.root);
+        disposeObject3D(ai.rig.root);
       }
       aiCars = [];
     };
@@ -495,8 +538,12 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
         rig.bodyMaterial.envMap = envMapTexture;
         scene.add(rig.root);
 
-        const startT = mode === 'race' ? (0.988 - i * 0.006 + 1) % 1 : ((i + 1) / (count + 1)) % 1;
-        const lane = (i % 2 === 0 ? -1 : 1) * 3.6;
+        const isStraight = Boolean(track.isStraight);
+        const gridLanes = [2.2, -5.4, 5.4, -2.2, 2.2, -5.4, 5.4];
+        const lane = isStraight ? gridLanes[i % gridLanes.length] : (i % 2 === 0 ? -1 : 1) * 3.6;
+        const startT = isStraight
+          ? Math.max(0.004, 0.018 - (Math.floor(i / 2) + 1) * 0.004)
+          : (mode === 'race' ? (0.988 - i * 0.006 + 1) % 1 : ((i + 1) / (count + 1)) % 1);
         const levelSpeedFactor = track.aiSpeedFactor ?? 0.82;
         const diffMod =
           mode === 'free_drive'
@@ -524,8 +571,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           name: AI_NAMES[i % AI_NAMES.length],
           color: aiColor,
           t: startT,
-          // Grid AI start just behind t=0, so their lap becomes 1 when crossing t=0 at race start
-          laps: mode === 'race' ? 0 : 1,
+          laps: isStraight ? 1 : (mode === 'race' ? 0 : 1),
           lapCooldown: 0,
           finished: false,
           finishTime: null,
@@ -548,7 +594,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       const s = builtTrack.getSampleAtT(ai.t);
 
       ai.worldX = s.point.x + s.normal.x * ai.laneOffset;
-      ai.worldY = s.point.y + 0.04;
+      ai.worldY = THREE.MathUtils.damp(ai.worldY || s.point.y + 0.04, s.point.y + 0.04, 28, dt);
       ai.worldZ = s.point.z + s.normal.z * ai.laneOffset;
 
       const targetHeading = Math.atan2(-s.tangent.x, -s.tangent.z);
@@ -576,7 +622,12 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       prevSpeedMs: 0,
       longitudinalAccelG: 0,
       lateralVel: 0,
-      steerAngle: 0, // -0.46 (right) to +0.46 (left)
+      yawRate: 0, // rad/s, vitesse de rotation réelle de la caisse
+      steerAngle: 0, // radians
+      steerAngleDeg: 0, // degrees matching Unity CarSteering
+      frontLeftSteerDeg: 0,
+      frontRightSteerDeg: 0,
+      slipAngleDeg: 0,
       rpm: 1000,
       gear: 1,
       manualGear: 1,
@@ -673,18 +724,24 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     };
 
     const resetSession = () => {
-      const sStart = builtTrack.samples[1] || builtTrack.samples[0];
-      const spawnLatOffset = 2.8;
-      phys.x = sStart.point.x - sStart.normal.x * spawnLatOffset;
+      const isStraight = Boolean(stateRef.current.trackSpec.isStraight);
+      const sStart = isStraight ? builtTrack.samples[12] : (builtTrack.samples[1] || builtTrack.samples[0]);
+      const spawnLatOffset = isStraight ? -2.2 : 2.8;
+      phys.x = isStraight ? -2.2 : (sStart.point.x - sStart.normal.x * spawnLatOffset);
       phys.y = sStart.point.y + 0.04;
-      phys.z = sStart.point.z - sStart.normal.z * spawnLatOffset;
-      phys.heading = Math.atan2(-sStart.tangent.x, -sStart.tangent.z);
-      phys.roadPitch = sStart.pitch;
+      phys.z = isStraight ? sStart.point.z : (sStart.point.z - sStart.normal.z * spawnLatOffset);
+      phys.heading = isStraight ? 0 : Math.atan2(-sStart.tangent.x, -sStart.tangent.z);
+      phys.roadPitch = isStraight ? 0 : sStart.pitch;
       phys.speedMs = 0;
       phys.prevSpeedMs = 0;
       phys.longitudinalAccelG = 0;
       phys.lateralVel = 0;
+      phys.yawRate = 0;
       phys.steerAngle = 0;
+      phys.steerAngleDeg = 0;
+      phys.frontLeftSteerDeg = 0;
+      phys.frontRightSteerDeg = 0;
+      phys.slipAngleDeg = 0;
       phys.rpm = 1000;
       phys.gear = 1;
       phys.manualGear = 1;
@@ -736,13 +793,35 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       camera.lookAt(_smoothedLookAt);
     };
 
+    const respawnCar = () => {
+      const closest = builtTrack.getClosestSample(phys.x, phys.z);
+      const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
+      phys.x = closest.sample.point.x;
+      phys.y = closest.sample.point.y + 0.05;
+      phys.z = closest.sample.point.z;
+      phys.heading = trackHeading;
+      phys.roadPitch = closest.sample.pitch;
+      phys.speedMs = Math.max(10, Math.abs(phys.speedMs));
+      phys.steerAngle = 0;
+      phys.steerAngleDeg = 0;
+      phys.frontLeftSteerDeg = 0;
+      phys.frontRightSteerDeg = 0;
+      phys.slipAngleDeg = 0;
+      phys.lateralVel = 0;
+      phys.yawRate = 0;
+      phys.longitudinalAccelG = 0;
+      phys.cameraShake = 0.06;
+      soundEngine.playCheckpointChime();
+      setBanner('VÉHICULE RÉTABLI SUR LA PISTE', 2.0);
+    };
+
     resetSession();
 
     if (!isSoftwareGl) {
       renderer.compile(scene, camera);
     }
 
-    // 6. Keyboard Input Handling (including Manual Shift E/Q/PageUp/PageDown & Look Back KeyB)
+    // 6. Keyboard Input Handling (including Manual Shift E/PageUp/PageDown, Look Back KeyB & Respawn KeyR)
     const keys = {
       up: false,
       down: false,
@@ -765,8 +844,11 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       if (code === 'KeyE' || code === 'PageUp') {
         touchInputRef.current.shiftUpQueued = true;
       }
-      if (code === 'KeyR' || code === 'PageDown') {
+      if (code === 'PageDown') {
         touchInputRef.current.shiftDownQueued = true;
+      }
+      if (code === 'KeyR' && stateRef.current.screenState === 'playing') {
+        respawnCar();
       }
 
       if (code === 'Escape' && (stateRef.current.screenState === 'playing' || stateRef.current.screenState === 'paused')) {
@@ -814,13 +896,20 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
     const handleResize = () => {
       if (!container) return;
-      const w = container.clientWidth || window.innerWidth;
-      const h = container.clientHeight || window.innerHeight;
+      const w = window.innerWidth || container.clientWidth;
+      const h = window.innerHeight || container.clientHeight;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      renderer.setPixelRatio(getTargetPixelRatio(activeQualityTier));
+      renderer.setSize(w, h, true);
+    };
+    const handleOrientationChange = () => {
+      handleResize();
+      window.setTimeout(handleResize, 120);
+      window.setTimeout(handleResize, 320);
     };
     window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleOrientationChange);
 
     // 7. Main Simulation & Render Loop
     const clock = new THREE.Clock();
@@ -876,6 +965,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       if (rebuildFlagRef.current.trackDirty) {
         rebuildFlagRef.current.trackDirty = false;
         activeQualityTier = resolveQualityTier(stateRef.current.settings.quality);
+        renderer.setPixelRatio(getTargetPixelRatio(activeQualityTier));
         scene.remove(builtTrack.group);
         builtTrack.dispose();
         builtTrack = buildTrackEnvironment(
@@ -893,6 +983,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       if (rebuildFlagRef.current.carDirty) {
         rebuildFlagRef.current.carDirty = false;
         scene.remove(playerCar.root);
+        disposeObject3D(playerCar.root);
         playerCar = buildSportsCarModel(
           stateRef.current.carSpec,
           stateRef.current.customization,
@@ -997,6 +1088,10 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             w.rotation.x -= ai.speedMs * dt * 2.5;
           }
         }
+        playerCar.bodyGroup.rotation.set(0, 0, 0);
+        playerCar.bodyGroup.position.set(0, 0, 0);
+        playerCar.root.position.set(phys.x, phys.y, phys.z);
+        playerCar.root.rotation.set(phys.roadPitch, phys.heading, 0, 'YXZ');
 
         soundEngine.updateEngine(1000, 0, false, false);
       } else if (isPlaying) {
@@ -1054,7 +1149,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           phys.z += forwardZ * phys.speedMs * dt;
 
           const closest = builtTrack.getClosestSample(phys.x, phys.z);
-          phys.y = closest.sample.point.y + 0.04;
+          phys.y = THREE.MathUtils.damp(phys.y, closest.sample.point.y + 0.04, 28, dt);
           phys.roadPitch = THREE.MathUtils.damp(phys.roadPitch, closest.sample.pitch, 18, dt);
 
           const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
@@ -1076,9 +1171,9 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
           playerCar.root.position.set(phys.x, phys.y, phys.z);
           playerCar.root.rotation.set(phys.roadPitch, phys.heading, 0, 'YXZ');
-          playerCar.frontLeftPivot.rotation.y = phys.steerAngle;
-          playerCar.frontRightPivot.rotation.y = phys.steerAngle;
-          playerCar.steeringWheel.rotation.z = phys.steerAngle * 2.4;
+          playerCar.frontLeftPivot.rotation.y = -phys.frontLeftSteerDeg * (Math.PI / 180.0);
+          playerCar.frontRightPivot.rotation.y = -phys.frontRightSteerDeg * (Math.PI / 180.0);
+          playerCar.steeringWheel.rotation.z = -phys.steerAngleDeg * (Math.PI / 180.0) * 2.4;
           for (const w of playerCar.wheels) {
             w.rotation.x -= phys.speedMs * dt * 2.55;
           }
@@ -1113,26 +1208,10 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           const brakePressed = keys.down || tInput.brake;
           const nitroPressed = keys.nitro || tInput.nitro;
 
-          // Handle Manual Sequential Gear Shifts
-          if (tInput.shiftUpQueued) {
-            tInput.shiftUpQueued = false;
-            phys.manualGear = Math.min(6, phys.manualGear + 1);
-          }
-          if (tInput.shiftDownQueued) {
-            tInput.shiftDownQueued = false;
-            phys.manualGear = Math.max(1, phys.manualGear - 1);
-          }
-
-          const spec = stateRef.current.carSpec;
           const isManual = stateRef.current.settings.transmission === 'manual';
-          const gearSpeedCapsKmh = [72, 124, 178, 232, 290, 410];
-          const manualMaxKmh = isManual
-            ? Math.min(spec.maxSpeedKmh, gearSpeedCapsKmh[phys.manualGear - 1] || spec.maxSpeedKmh)
-            : spec.maxSpeedKmh;
-          const maxSpeedMs = (manualMaxKmh / 3.6) * (phys.nitroActive ? 1.18 : 1.0);
 
           // Nitro Logic
-          if (nitroPressed && phys.nitro > 5 && throttlePressed && phys.speedMs > 12) {
+          if (nitroPressed && phys.nitro > 5 && throttlePressed && Math.abs(phys.speedMs) > 10) {
             phys.nitroActive = true;
             phys.nitro = Math.max(0, phys.nitro - dt * 28);
           } else {
@@ -1140,27 +1219,91 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             phys.nitro = Math.min(100, phys.nitro + dt * 9);
           }
 
-          phys.prevSpeedMs = phys.speedMs;
-
-          // Progressive Acceleration, Slope Gravity Assist, Braking & Reverse
-          const slopeGravityForce = -Math.sin(phys.roadPitch) * 9.81 * 0.65;
-          if (throttlePressed) {
-            const accelBoost = phys.nitroActive ? 1.45 : 1.0;
-            const speedRatio = Math.min(1, Math.abs(phys.speedMs) / Math.max(10, maxSpeedMs));
-            const torqueCurve = 1.0 - speedRatio * 0.52;
-            phys.speedMs += (spec.acceleration * accelBoost * torqueCurve * phys.gripFactor + slopeGravityForce) * dt;
-          } else if (brakePressed) {
-            if (phys.speedMs > 1.5) {
-              phys.speedMs -= spec.braking * phys.gripFactor * dt;
-            } else {
-              phys.speedMs = Math.max(-22, phys.speedMs - 18 * dt);
-            }
-          } else {
-            phys.speedMs = THREE.MathUtils.damp(phys.speedMs + slopeGravityForce * dt, 0, 1.25, dt);
+          // Check for queued car respawn / unstick
+          if (tInput.respawnQueued) {
+            tInput.respawnQueued = false;
+            respawnCar();
           }
 
-          phys.speedMs = THREE.MathUtils.clamp(phys.speedMs, -22, maxSpeedMs);
+          // 1. Steering Input: -1 (Gauche) to +1 (Droite) matching Unity CarSteering
+          const keySteer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+          const rawWheelSteer = tInput.steerInput;
+          const rawSteerInput = Math.abs(rawWheelSteer) > 0.01 ? rawWheelSteer : keySteer;
+          const steerInput = THREE.MathUtils.clamp(rawSteerInput, -1.0, 1.0);
 
+          // Track surface classification & base friction
+          const closest = builtTrack.getClosestSample(phys.x, phys.z);
+          const halfRoad = builtTrack.roadWidth / 2;
+          const absLat = Math.abs(closest.signedLateralDist);
+
+          let baseSurfaceGrip = 1.0;
+          if (absLat <= halfRoad - 0.2) {
+            phys.surfaceType = 'asphalt';
+            baseSurfaceGrip = currentWeather === 'rain' ? 0.88 : currentWeather === 'snow' ? 0.72 : 1.0;
+          } else if (absLat <= halfRoad + 0.85) {
+            phys.surfaceType = 'kerb';
+            baseSurfaceGrip = 0.84;
+          } else {
+            phys.surfaceType = 'shoulder';
+            baseSurfaceGrip = 0.58;
+          }
+
+          const speedAbs = Math.abs(phys.speedMs);
+          const speedKmh = speedAbs * 3.6;
+          const isReversing = phys.speedMs < -0.1 || (brakePressed && phys.speedMs < 0.2);
+
+          // 5. Appui aérodynamique & charge verticale (Unity CarSteering: downforce = 30f)
+          const downforceFactor = 1.0 + (30.0 / 1200.0) * THREE.MathUtils.clamp(speedKmh / 100.0, 0, 2.5);
+          phys.gripFactor = baseSurfaceGrip * downforceFactor;
+
+          // 6. PHYSIQUE : vitesse avant + latérale, adhérence limitée, sous-pas fixes (120 Hz max)
+          phys.prevSpeedMs = phys.speedMs;
+          const baseMaxSpeed =
+            (stateRef.current.carSpec.maxSpeedKmh / 3.6) * (phys.nitroActive ? 1.18 : 1.0);
+          const maxSpeed =
+            phys.surfaceType === 'shoulder' ? Math.min(baseMaxSpeed, 28) : baseMaxSpeed;
+
+          const dynInput: CarDynInput = {
+            steerInput,
+            throttle: Boolean(throttlePressed),
+            brake: Boolean(brakePressed),
+            canDrive,
+            nitroActive: phys.nitroActive,
+            sensitivity: stateRef.current.settings.steeringSensitivity,
+            gripFactor: phys.gripFactor,
+            maxSpeedMs: maxSpeed,
+            acceleration: stateRef.current.carSpec.acceleration,
+            braking: stateRef.current.carSpec.braking,
+            handling: stateRef.current.carSpec.handling,
+            offRoad: phys.surfaceType === 'shoulder',
+          };
+          stepCarDynamicsSubsteps(phys, dynInput, dt);
+
+          // 8. Electronic Stability Program (ESP) & Direction Assistée
+          const espActive = stateRef.current.settings.absEspEnabled !== false;
+          if (espActive && speedAbs > 8) {
+            const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
+            let headingDiff = trackHeading - phys.heading;
+            while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
+            while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
+
+            const isActivelySteering = Math.abs(steerInput) > 0.02;
+            if (!isActivelySteering && phys.surfaceType === 'asphalt') {
+              if (Math.abs(headingDiff) < 0.24) {
+                const alignSpeed = stateRef.current.trackSpec.isStraight ? 2.5 : 3.5;
+                phys.heading += headingDiff * alignSpeed * dt;
+              }
+            } else if (isActivelySteering && Math.abs(headingDiff) > 0.45) {
+              const antiSpinDamp = THREE.MathUtils.clamp((speedKmh / 280.0) * 2.0, 0.6, 2.2);
+              phys.heading += headingDiff * antiSpinDamp * dt;
+            }
+          }
+
+          // Road height & pitch alignment
+          phys.y = THREE.MathUtils.damp(phys.y, closest.sample.point.y + 0.04, 28, dt);
+          phys.roadPitch = THREE.MathUtils.damp(phys.roadPitch, closest.sample.pitch, 18, dt);
+
+          // Longitudinal acceleration for body dive/squat and camera
           const rawAccelG = (phys.speedMs - phys.prevSpeedMs) / Math.max(0.008, dt) / 28;
           phys.longitudinalAccelG = THREE.MathUtils.damp(
             phys.longitudinalAccelG,
@@ -1169,120 +1312,95 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             dt
           );
 
-          // Steering Dynamics: Combine Analog Virtual Steering Wheel + Keyboard
-          const kbSteer = (keys.left ? 1 : 0) - (keys.right ? 1 : 0);
-          const wheelSteer = -tInput.steerInput;
-          const steerInput = Math.abs(wheelSteer) > 0.01 ? wheelSteer : kbSteer;
-
-          const steerTarget = steerInput * 0.46;
-          phys.steerAngle = THREE.MathUtils.damp(phys.steerAngle, steerTarget, 13, dt);
-
-          const absSpeed = Math.abs(phys.speedMs);
-          const drivingStyle = stateRef.current.settings.drivingStyle;
-          const absEsp = stateRef.current.settings.absEspEnabled;
-
-          if (absSpeed > 0.4) {
-            const directionSign = phys.speedMs >= 0 ? 1 : -1;
-            const highSpeedDampen = 1 / (1 + absSpeed * 0.0175);
-            const sensitivity = stateRef.current.settings.steeringSensitivity;
-            const driftTurnMult = drivingStyle === 'drift' ? 1.16 : drivingStyle === 'grip' ? 1.05 : 1.0;
-
-            const turnRate =
-              (phys.steerAngle / 0.46) *
-              spec.handling *
-              driftTurnMult *
-              phys.gripFactor *
-              sensitivity *
-              highSpeedDampen *
-              Math.min(1, absSpeed / 4.5) *
-              directionSign;
-            phys.heading += turnRate * dt;
-
-            // Lateral slip & drift calculation adapted to DrivingStyle & ABS/ESP
-            const styleSlip = drivingStyle === 'drift' ? 0.31 : drivingStyle === 'grip' ? 0.11 : 0.17;
-            const weatherSlip = phys.gripFactor < 0.9 ? (absEsp ? 0.04 : 0.09) : 0;
-            const lateralForce = turnRate * absSpeed * (styleSlip + weatherSlip);
-            phys.lateralVel = THREE.MathUtils.damp(phys.lateralVel, lateralForce, drivingStyle === 'drift' ? 4.2 : 6.0, dt);
-            phys.drifting =
-              Math.abs(phys.lateralVel) > (drivingStyle === 'drift' ? 1.9 : 2.85) ||
-              (brakePressed && absSpeed > 15 && Math.abs(steerInput) > 0.2);
-          } else {
-            phys.lateralVel = THREE.MathUtils.damp(phys.lateralVel, 0, 8, dt);
-            phys.drifting = false;
-          }
-
-          // Advance World Position
-          const forwardX = -Math.sin(phys.heading);
-          const forwardZ = -Math.cos(phys.heading);
-          const rightX = Math.cos(phys.heading);
-          const rightZ = -Math.sin(phys.heading);
-
-          phys.x += (forwardX * phys.speedMs + rightX * phys.lateralVel * 0.26) * dt;
-          phys.z += (forwardZ * phys.speedMs + rightZ * phys.lateralVel * 0.26) * dt;
-
-          // Track Spline Projection, 3D Road Elevation, Surface + Weather Grip & Guardrail Deflection
-          const closest = builtTrack.getClosestSample(phys.x, phys.z);
-          const halfRoad = builtTrack.roadWidth / 2;
-          const absLat = Math.abs(closest.signedLateralDist);
-
-          phys.y = closest.sample.point.y + 0.04;
-          phys.roadPitch = THREE.MathUtils.damp(phys.roadPitch, closest.sample.pitch, 18, dt);
-
-          // Weather Grip Modifier (Rain / Snow reduce grip, compensated partially by ABS/ESP)
-          const weatherGripMult =
-            currentWeather === 'snow'
-              ? absEsp
-                ? 0.88
-                : 0.78
-              : currentWeather === 'rain'
-              ? absEsp
-                ? 0.92
-                : 0.84
-              : 1.0;
-
-          if (absLat <= halfRoad - 0.3) {
-            phys.surfaceType = 'asphalt';
-            phys.gripFactor = 1.0 * weatherGripMult;
-          } else if (absLat <= halfRoad + 0.85) {
-            phys.surfaceType = 'kerb';
-            phys.gripFactor = 0.95 * weatherGripMult;
-            phys.speedMs *= 1 - 0.06 * dt;
-          } else {
-            phys.surfaceType = 'shoulder';
-            phys.gripFactor = 0.86 * weatherGripMult;
-            phys.speedMs *= 1 - 0.16 * dt;
-          }
-
-          // Smooth Low-Guardrail Gliding Deflection (Never gets stuck / coincé)
-          const maxBarrierDist = halfRoad + 1.65;
+          // Smooth Anti-Stick Guardrail Collision & Glancing Deflection
+          const maxBarrierDist = halfRoad + 1.85;
           if (absLat > maxBarrierDist) {
             const sign = closest.signedLateralDist >= 0 ? 1 : -1;
-            phys.x = closest.sample.point.x + closest.sample.normal.x * sign * maxBarrierDist;
-            phys.z = closest.sample.point.z + closest.sample.normal.z * sign * maxBarrierDist;
+            const outwardX = closest.sample.normal.x * sign;
+            const outwardZ = closest.sample.normal.z * sign;
+            const inwardX = -outwardX;
+            const inwardZ = -outwardZ;
 
-            const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
-            let headingDiff = trackHeading - phys.heading;
-            while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
-            while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
-            phys.heading += headingDiff * 0.32;
-            phys.lateralVel *= 0.35;
+            const fwdX = -Math.sin(phys.heading);
+            const fwdZ = -Math.cos(phys.heading);
 
-            if (absSpeed > 15) {
-              phys.speedMs *= 1 - 0.35 * dt;
-              phys.cameraShake = Math.min(0.18, absSpeed * 0.005);
+            // Velocity component pointing outward towards the barrier
+            const velOutward = (fwdX * outwardX + fwdZ * outwardZ) * phys.speedMs;
+
+            if (velOutward > 0) {
+              // Car is driving INTO the barrier:
+              // 1. Keep the car 25cm inside the barrier without clamping it permanently
+              phys.x = closest.sample.point.x + closest.sample.normal.x * sign * maxBarrierDist + inwardX * 0.25;
+              phys.z = closest.sample.point.z + closest.sample.normal.z * sign * maxBarrierDist + inwardZ * 0.25;
+
+              // 2. Smoothly deflect heading towards track tangent so car glances forward instead of sticking nose-first
+              const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
+              let headingDiff = trackHeading - phys.heading;
+              while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
+              while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
+              phys.heading += headingDiff * Math.min(1.0, dt * 4.0);
+
+              // 3. Glancing friction (only damp slightly, never kill speed to 0 so the car can keep moving!)
+              phys.speedMs = Math.max(0, phys.speedMs * Math.exp(-2.45 * dt)); // ≈ 0.96/image à 60 FPS, indépendant des FPS
+
+              if (speedAbs > 9) {
+                soundEngine.playCollision(Math.min(1.0, speedAbs / 30));
+                phys.cameraShake = Math.min(0.18, speedAbs * 0.005);
+              }
+            } else {
+              // Car is REVERSING or steering AWAY from the barrier:
+              // DO NOT block movement! Allow backing up freely towards the center of the road!
+              if (absLat > maxBarrierDist + 1.2) {
+                phys.x = closest.sample.point.x + closest.sample.normal.x * sign * (maxBarrierDist + 1.2);
+                phys.z = closest.sample.point.z + closest.sample.normal.z * sign * (maxBarrierDist + 1.2);
+              }
             }
           }
 
+          // Gear & RPM computation
+          const topSpeedMs = (stateRef.current.carSpec.maxSpeedKmh / 3.6);
+          if (isManual) {
+            if (tInput.shiftUpQueued) {
+              phys.manualGear = Math.min(6, phys.manualGear + 1);
+              tInput.shiftUpQueued = false;
+            }
+            if (tInput.shiftDownQueued) {
+              phys.manualGear = Math.max(1, phys.manualGear - 1);
+              tInput.shiftDownQueued = false;
+            }
+            phys.gear = phys.manualGear;
+          } else {
+            const speedFrac = Math.max(0, speedAbs) / topSpeedMs;
+            phys.gear = Math.min(6, Math.max(1, Math.floor(speedFrac * 6) + 1));
+          }
+          const gearMaxSpeed = (topSpeedMs / 6) * phys.gear;
+          const gearMinSpeed = (topSpeedMs / 6) * (phys.gear - 1);
+          const gearProgress = THREE.MathUtils.clamp(
+            (speedAbs - gearMinSpeed) / Math.max(1, gearMaxSpeed - gearMinSpeed),
+            0,
+            1
+          );
+          const targetRpm = throttlePressed
+            ? 1200 + gearProgress * 6200
+            : 850 + gearProgress * 2200;
+          phys.rpm = THREE.MathUtils.damp(phys.rpm, targetRpm, 10, dt);
+
           // 1. DÉTECTION : Lap Progress & Checkpoint Validation with Anti-Doublon Cooldown
+          const isStraight = Boolean(stateRef.current.trackSpec.isStraight);
           const prevT = phys.progressT;
           const newT = closest.sample.t;
-          if (newT > 0.25 && newT < 0.85) {
+
+          const crossedFinish = isStraight
+            ? newT >= 0.94 && prevT < 0.94 && phys.lapCooldown <= 0
+            : prevT > 0.75 && newT < 0.25 && phys.maxProgressReached > 0.40 && phys.lapCooldown <= 0;
+
+          if (!isStraight && newT > 0.25 && newT < 0.85) {
             phys.maxProgressReached = Math.max(phys.maxProgressReached, newT);
           }
 
-          if (prevT > 0.75 && newT < 0.25 && phys.maxProgressReached > 0.40 && phys.lapCooldown <= 0) {
+          if (crossedFinish) {
             phys.maxProgressReached = 0;
-            phys.lapCooldown = 5.0; // Délai anti-doublon sur la ligne d'arrivée
+            phys.lapCooldown = 4.0; // Délai anti-doublon sur la ligne d'arrivée
             if (phys.bestLapTime === null || phys.currentLapTime < phys.bestLapTime) {
               phys.bestLapTime = phys.currentLapTime;
             }
@@ -1302,26 +1420,29 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
                   const playerEntry = lockedStandings.find((s) => s.isPlayer);
                   phys.finalPosition = playerEntry ? playerEntry.rank : 1;
                   soundEngine.playCheckpointChime();
-                  setBanner('ARRIVÉE !', 2.5);
+                  setBanner('ARRIVÉE ! SPRINT TERMINÉ !', 2.8);
                 }
               } else {
                 phys.lap = nextLap;
                 phys.currentLapTime = 0;
                 soundEngine.playCheckpointChime();
-                if (phys.lap === phys.totalLaps) {
-                  setBanner('DERNIER TOUR — FINAL !', 2.6);
-                } else {
-                  setBanner(`TOUR ${phys.lap} / ${phys.totalLaps}`, 2.5);
-                }
+                setBanner(`SECTION ${phys.lap} / ${phys.totalLaps}`, 2.5);
               }
             } else {
               phys.lap += 1;
               phys.currentLapTime = 0;
               soundEngine.playCheckpointChime();
-              setBanner(`TOUR COMPLÉTÉ`, 2.2);
+              setBanner(`SECTION FRANCHIE`, 2.2);
             }
           }
-          phys.progressT = newT;
+
+          // En mode ligne droite, si le joueur dépasse la fin de la piste, boucler vers l'avant
+          if (isStraight && phys.z <= -2520) {
+            phys.z += 2450;
+            phys.progressT = 0.02;
+          } else {
+            phys.progressT = newT;
+          }
 
           // Exploration Mode Beacons Check
           if (stateRef.current.gameMode === 'exploration') {
@@ -1356,17 +1477,35 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             const targetAiSpeed = ai.finished ? ai.baseMaxSpeedMs * 0.45 : ai.baseMaxSpeedMs;
             ai.speedMs = THREE.MathUtils.damp(ai.speedMs, targetAiSpeed, 1.8 + aiAggression, dt);
             const prevAiT = ai.t;
-            ai.t = (ai.t + (ai.speedMs * dt) / builtTrack.totalLength) % 1;
-            if (prevAiT > 0.75 && ai.t < 0.25 && ai.lapCooldown <= 0) {
-              // Shorter cooldown on initial start line crossing (laps 0 -> 1)
-              ai.lapCooldown = ai.laps === 0 ? 2.5 : 5.0;
-              if (!ai.finished) {
-                ai.laps += 1;
-                if (stateRef.current.gameMode === 'race' && ai.laps > phys.totalLaps) {
-                  ai.laps = phys.totalLaps;
-                  ai.finished = true;
-                  ai.finishTime = phys.elapsedTime;
-                  ai.finishOrder = ++phys.finishCounter;
+            if (isStraight) {
+              ai.t = Math.min(1.0, ai.t + (ai.speedMs * dt) / builtTrack.totalLength);
+              if (ai.t >= 0.94 && prevAiT < 0.94 && ai.lapCooldown <= 0) {
+                ai.lapCooldown = 4.0;
+                if (!ai.finished) {
+                  ai.laps += 1;
+                  if (stateRef.current.gameMode === 'race' && ai.laps > phys.totalLaps) {
+                    ai.laps = phys.totalLaps;
+                    ai.finished = true;
+                    ai.finishTime = phys.elapsedTime;
+                    ai.finishOrder = ++phys.finishCounter;
+                  }
+                }
+              }
+              if (ai.t >= 0.98 && !ai.finished) {
+                ai.t = 0.02; // boucle en roue libre si la course continue
+              }
+            } else {
+              ai.t = (ai.t + (ai.speedMs * dt) / builtTrack.totalLength) % 1;
+              if (prevAiT > 0.75 && ai.t < 0.25 && ai.lapCooldown <= 0) {
+                ai.lapCooldown = ai.laps === 0 ? 2.5 : 5.0;
+                if (!ai.finished) {
+                  ai.laps += 1;
+                  if (stateRef.current.gameMode === 'race' && ai.laps > phys.totalLaps) {
+                    ai.laps = phys.totalLaps;
+                    ai.finished = true;
+                    ai.finishTime = phys.elapsedTime;
+                    ai.finishOrder = ++phys.finishCounter;
+                  }
                 }
               }
             }
@@ -1391,42 +1530,42 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
               const nz = dz / dist;
               phys.x += nx * overlap;
               phys.z += nz * overlap;
-              phys.speedMs *= 0.88;
-              phys.cameraShake = 0.22;
-              soundEngine.playCollision(0.55);
+              phys.speedMs *= Math.exp(-5.0 * dt); // ≈ 0.92/image à 60 FPS, indépendant des FPS
+              soundEngine.playCollision(0.45);
+              phys.cameraShake = 0.18;
             }
           }
 
-          // Update Player Car Visual Rig (stable on road without random rocking)
+          // Update Player Car Visual Rig
           playerCar.root.position.set(phys.x, phys.y, phys.z);
           playerCar.root.rotation.set(phys.roadPitch, phys.heading, 0, 'YXZ');
 
-          playerCar.frontLeftPivot.rotation.y = phys.steerAngle;
-          playerCar.frontRightPivot.rotation.y = phys.steerAngle;
-          playerCar.steeringWheel.rotation.z = phys.steerAngle * 2.4;
+          // Sync visual wheel meshes with authentic Ackermann angles (Unity CarSteering: SyncMesh)
+          playerCar.frontLeftPivot.rotation.y = -phys.frontLeftSteerDeg * (Math.PI / 180.0);
+          playerCar.frontRightPivot.rotation.y = -phys.frontRightSteerDeg * (Math.PI / 180.0);
+          playerCar.steeringWheel.rotation.z = -phys.steerAngleDeg * (Math.PI / 180.0) * 2.4;
 
           for (const w of playerCar.wheels) {
             w.rotation.x -= phys.speedMs * dt * 2.55;
           }
 
-          const kerbVib =
-            phys.surfaceType !== 'asphalt' && absSpeed > 4 ? Math.sin(elapsed * 44) * 0.01 : 0;
-          playerCar.wheelAssemblies[0].position.y = kerbVib;
-          playerCar.wheelAssemblies[1].position.y = -kerbVib;
-          playerCar.wheelAssemblies[2].position.y = 0.39 - kerbVib;
-          playerCar.wheelAssemblies[3].position.y = 0.39 + kerbVib;
-
-          const targetPitch = -phys.longitudinalAccelG * 0.012;
-          const targetRoll = -phys.steerAngle * Math.min(1, absSpeed / 28) * 0.032;
-          playerCar.bodyGroup.rotation.x = THREE.MathUtils.damp(playerCar.bodyGroup.rotation.x, targetPitch, 10, dt);
-          playerCar.bodyGroup.rotation.z = THREE.MathUtils.damp(playerCar.bodyGroup.rotation.z, targetRoll, 10, dt);
+          // Anti-Roll bar balance & aerodynamic downforce stability (Unity CarSteering: antiRollForce = 6000f)
+          playerCar.bodyGroup.rotation.x = -phys.longitudinalAccelG * 0.016;
+          playerCar.bodyGroup.rotation.z = THREE.MathUtils.damp(
+            playerCar.bodyGroup.rotation.z,
+            -(phys.steerAngleDeg * (Math.PI / 180.0)) * (speedKmh / 160.0) * 0.035,
+            12,
+            dt
+          );
           playerCar.bodyGroup.position.y = 0;
 
-          const speedKmh = Math.abs(phys.speedMs) * 3.6;
+          // Taillights, Brake Lights, Reverse Lights & Turn Signals
+          playerCar.brakeLightMaterial.emissiveIntensity = brakePressed && !isReversing ? 6.8 : phys.headlightsOn ? 1.8 : 0.8;
+          playerCar.brakeHaloMaterial.opacity = brakePressed && !isReversing ? 0.95 : phys.headlightsOn ? 0.42 : 0.18;
+          playerCar.reverseLightMaterial.emissiveIntensity = isReversing ? 4.2 : 0.15;
+          playerCar.turnSignalMaterial.emissiveIntensity =
+            Math.abs(phys.steerAngle) > 0.28 && Math.sin(elapsed * 9) > 0 ? 3.8 : 0.0;
 
-          // 3. FEUX ARRIÈRE : Emissive red LED bar + additive halo sprites glow strongly on brake
-          playerCar.brakeLightMaterial.emissiveIntensity = brakePressed ? 6.8 : phys.headlightsOn ? 1.8 : 0.8;
-          playerCar.brakeHaloMaterial.opacity = brakePressed ? 0.95 : phys.headlightsOn ? 0.42 : 0.18;
           for (let hIdx = 0; hIdx < playerCar.brakeHaloSprites.length; hIdx++) {
             const isCenter = hIdx === 1;
             const boost = brakePressed ? 1.38 : 1.0;
@@ -1437,10 +1576,8 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             );
           }
 
-          // 4. ROUES : High-speed radial motion blur disc opacity
+          // Wheels high-speed blur & aerodynamic light trails
           playerCar.wheelBlurMaterial.opacity = THREE.MathUtils.clamp((speedKmh - 65) / 170, 0, 0.62);
-
-          // 5. EFFETS : Subtle high-speed taillight light trails behind the car
           const trailRatio = THREE.MathUtils.clamp((speedKmh - 75) / 180, 0, 1);
           playerCar.tailTrailMaterial.opacity = trailRatio * (brakePressed ? 0.52 : 0.32);
           const trailScaleZ = 0.35 + trailRatio * 1.25;
@@ -1448,53 +1585,30 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             tr.scale.set(1, 1, trailScaleZ);
           }
 
-          // Gearbox & RPM computation (Supports both Automatic & Manual Sequential)
-          if (phys.speedMs < -0.5) {
-            phys.gear = -1;
-            phys.rpm = 1200 + (speedKmh / 80) * 5200;
-          } else if (isManual) {
-            phys.gear = phys.manualGear;
-            const gMax = gearSpeedCapsKmh[phys.manualGear - 1] || 350;
-            const gMin = phys.manualGear === 1 ? 0 : gearSpeedCapsKmh[phys.manualGear - 2] * 0.65;
-            const ratio = Math.max(0, Math.min(1.05, (speedKmh - gMin) / Math.max(1, gMax - gMin)));
-            phys.rpm = Math.round(1400 + ratio * 7100);
-          } else if (speedKmh < 2) {
-            phys.gear = 1;
-            phys.rpm = throttlePressed ? 2400 : 820;
-          } else {
-            const gearThresholds = [0, 54, 102, 152, 208, 268, 390];
-            let g = 1;
-            for (let i = 1; i <= 6; i++) {
-              if (speedKmh >= gearThresholds[i - 1]) g = i;
-            }
-            phys.gear = g;
-            phys.manualGear = g;
-            const gMin = gearThresholds[g - 1] * 0.75;
-            const gMax = gearThresholds[g];
-            const ratio = Math.max(0, Math.min(1, (speedKmh - gMin) / Math.max(1, gMax - gMin)));
-            phys.rpm = Math.round(2100 + ratio * 6200);
-          }
-
-          // 5. EFFETS : Light Tire Smoke & Small Sparks on Hard Braking / Drifting
+          // Tire Smoke, Drift Scrub & Off-Track Dust
           if (
             phys.drifting ||
             (brakePressed && speedKmh > 38) ||
-            (phys.surfaceType === 'shoulder' && speedKmh > 25) ||
+            (phys.surfaceType === 'shoulder' && speedKmh > 15) ||
             (currentWeather === 'rain' && speedKmh > 65)
           ) {
+            const fX = -Math.sin(phys.heading);
+            const fZ = -Math.cos(phys.heading);
+            const rX = Math.cos(phys.heading);
+            const rZ = -Math.sin(phys.heading);
             smokeParticles.spawn(
-              phys.x - forwardX * 2.1 + rightX * 1.15,
+              phys.x - fX * 2.1 + rX * 1.15,
               phys.y + 0.22,
-              phys.z - forwardZ * 2.1 + rightZ * 1.15,
+              phys.z - fZ * 2.1 + rZ * 1.15,
               (Math.random() - 0.5) * 2.0,
               0.5 + Math.random() * 0.8,
               (Math.random() - 0.5) * 2.0,
               0.42
             );
             smokeParticles.spawn(
-              phys.x - forwardX * 2.1 - rightX * 1.15,
+              phys.x - fX * 2.1 - rX * 1.15,
               phys.y + 0.22,
-              phys.z - forwardZ * 2.1 - rightZ * 1.15,
+              phys.z - fZ * 2.1 - rZ * 1.15,
               (Math.random() - 0.5) * 2.0,
               0.5 + Math.random() * 0.8,
               (Math.random() - 0.5) * 2.0,
@@ -1502,45 +1616,54 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             );
           }
 
-          // Small friction sparks on hard braking at speed or curb/guardrail contact
-          if ((brakePressed && speedKmh > 55) || (phys.surfaceType === 'kerb' && speedKmh > 95)) {
+          // Friction sparks on hard braking / high-speed kerb
+          if ((brakePressed && speedKmh > 65) || (phys.surfaceType === 'kerb' && speedKmh > 105)) {
+            const fX = -Math.sin(phys.heading);
+            const fZ = -Math.cos(phys.heading);
+            const rX = Math.cos(phys.heading);
+            const rZ = -Math.sin(phys.heading);
             const sideSign = Math.random() > 0.5 ? 1 : -1;
             sparkParticles.spawn(
-              phys.x - forwardX * 1.85 + rightX * 1.05 * sideSign,
+              phys.x - fX * 1.85 + rX * 1.05 * sideSign,
               phys.y + 0.14,
-              phys.z - forwardZ * 1.85 + rightZ * 1.05 * sideSign,
-              -forwardX * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
+              phys.z - fZ * 1.85 + rZ * 1.05 * sideSign,
+              -fX * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
               1.2 + Math.random() * 2.4,
-              -forwardZ * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
+              -fZ * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
               0.24
             );
           }
 
           if (phys.nitroActive) {
+            const fX = -Math.sin(phys.heading);
+            const fZ = -Math.cos(phys.heading);
+            const rX = Math.cos(phys.heading);
+            const rZ = -Math.sin(phys.heading);
             nitroParticles.spawn(
-              phys.x - forwardX * 2.95 + rightX * 0.55,
+              phys.x - fX * 2.95 + rX * 0.55,
               phys.y + 0.38,
-              phys.z - forwardZ * 2.95 + rightZ * 0.55,
-              -forwardX * 6,
+              phys.z - fZ * 2.95 + rZ * 0.55,
+              -fX * 6,
               0.2,
-              -forwardZ * 6,
+              -fZ * 6,
               0.18
             );
             nitroParticles.spawn(
-              phys.x - forwardX * 2.95 - rightX * 0.55,
+              phys.x - fX * 2.95 - rX * 0.55,
               phys.y + 0.38,
-              phys.z - forwardZ * 2.95 - rightZ * 0.55,
-              -forwardX * 6,
+              phys.z - fZ * 2.95 - rZ * 0.55,
+              -fX * 6,
               0.2,
-              -forwardZ * 6,
+              -fZ * 6,
               0.18
             );
           }
 
+          // Synthesized engine audio
           soundEngine.updateEngine(
             phys.rpm,
             speedKmh,
-            phys.drifting || (brakePressed && speedKmh > 35),
+            phys.drifting || (brakePressed && speedKmh > 30),
             true,
             phys.gear,
             throttlePressed,
@@ -1559,6 +1682,10 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
         keyLight.position.set(phys.x + 50, phys.y + 85, phys.z + 40);
         keyLight.target.position.set(phys.x, phys.y, phys.z);
         keyLight.target.updateMatrixWorld();
+
+        carShowroomLight.position.set(phys.x + 3.8, phys.y + 11.0, phys.z + 4.8);
+        carShowroomLight.target.position.set(phys.x, phys.y + 0.45, phys.z);
+        carShowroomLight.target.updateMatrixWorld();
 
         // 8. Camera Choreography with FOV Offset, Distance Offset & 180° Look-Back Support
         const camMode = stateRef.current.settings.cameraMode;
@@ -1668,7 +1795,8 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       const rank = phys.finalPosition ?? (playerStanding ? playerStanding.rank : 1);
 
       telemetryEmitAccum += rawDt;
-      if (telemetryEmitAccum >= 0.05 || phys.raceFinished) {
+      const emitInterval = currentScreen === 'playing' ? 0.1 : 0.25;
+      if (telemetryEmitAccum >= emitInterval || phys.raceFinished) {
         telemetryEmitAccum = 0;
         const discoveredCount = builtTrack.beacons.filter((b) => b.collected).length;
 
@@ -1803,7 +1931,11 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       window.removeEventListener('gesturestart', preventGesture);
       window.removeEventListener('gesturechange', preventGesture);
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleOrientationChange);
       soundEngine.updateEngine(0, 0, false, false);
+      clearAICars();
+      scene.remove(playerCar.root);
+      disposeObject3D(playerCar.root);
       builtTrack.dispose();
       smokeParticles.dispose();
       nitroParticles.dispose();
@@ -1824,12 +1956,12 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
         className="w-full h-full"
         aria-label="Scène de course 3D"
       />
-      {/* Soft Cinematic Vignette & Subtle Atmospheric Bloom Overlay (Zero GPU Pass Cost for 60 FPS Mobile) */}
+      {/* Edge-only subtle vignette (100% transparent center so the 3D scene stays crystal-clear) */}
       <div
         className="pointer-events-none fixed inset-0 z-10"
         style={{
           background:
-            'radial-gradient(circle at 50% 48%, rgba(56, 189, 248, 0.03) 0%, rgba(15, 23, 42, 0.08) 58%, rgba(2, 6, 23, 0.52) 100%)',
+            'radial-gradient(circle at 50% 50%, transparent 0%, transparent 74%, rgba(2, 6, 23, 0.28) 100%)',
         }}
       />
     </div>
