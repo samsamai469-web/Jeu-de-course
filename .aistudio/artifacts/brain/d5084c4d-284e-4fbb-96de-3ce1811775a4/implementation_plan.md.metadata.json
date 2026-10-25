@@ -1,6 +1,6 @@
 {
-  "summary":  "Ported Unity CarSteering architecture into Three.js: speed-dependent angle curve (0km/h: 35°, 60km/h: 22°, 120km/h: 10°, 200km/h: 5°), asymmetric steer (150°/s) and fast return-to-center (280°/s), Ackermann geometry, automatic counter-steer assist, and aerodynamic downforce & anti-roll stability.",
-  "updatedAt":  "2026-10-25T08:31:23.151568550Z",
+  "summary":  "Plan d'adaptation complète de l'architecture et des comportements de Car Parking Multiplayer (App Store ID 1374868881) : modes Défis de Parking & Monde Ouvert (City/Highway), boîte de vitesses P-R-N-D + frein à main + clignotants/phares/klaxon, sortie du véhicule à pied, stations-service fonctionnelles, et garage complet (suspension, carrossage/camber, moteur HP/Nm, vitres teintées).",
+  "updatedAt":  "2026-10-25T15:31:36.160118129Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

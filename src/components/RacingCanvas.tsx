@@ -6,9 +6,11 @@ import {
   CarSpec,
   GameMode,
   GameSettings,
+  PARKING_CHALLENGES,
   RacerStanding,
   RearOpponentInfo,
   ScreenState,
+  ShifterPosition,
   TelemetryState,
   TrackSpec,
 } from '../types/game';
@@ -30,6 +32,15 @@ export interface TouchInputState {
   shiftUpQueued?: boolean;
   shiftDownQueued?: boolean;
   respawnQueued?: boolean;
+  shifterPos?: ShifterPosition;
+  handbrake?: boolean;
+  leftSignal?: boolean;
+  rightSignal?: boolean;
+  hazardLights?: boolean;
+  toggleHeadlightsQueued?: boolean;
+  toggleEngineQueued?: boolean;
+  toggleWalkQueued?: boolean;
+  refuelQueued?: boolean;
 }
 
 interface RacingCanvasProps {
@@ -41,6 +52,7 @@ interface RacingCanvasProps {
   settings: GameSettings;
   touchInputRef: React.MutableRefObject<TouchInputState>;
   raceSessionId: number;
+  parkingChallengeId?: number;
   onTelemetryUpdate: (telemetry: TelemetryState) => void;
   onPauseToggle: () => void;
   onCycleCamera: () => void;
@@ -118,6 +130,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
   settings,
   touchInputRef,
   raceSessionId,
+  parkingChallengeId = 1,
   onTelemetryUpdate,
   onPauseToggle,
   onCycleCamera,
@@ -133,6 +146,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     screenState,
     settings,
     raceSessionId,
+    parkingChallengeId,
   });
   stateRef.current = {
     carSpec,
@@ -142,6 +156,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
     screenState,
     settings,
     raceSessionId,
+    parkingChallengeId,
   };
 
   const callbacksRef = useRef({
@@ -177,8 +192,12 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
   useEffect(() => {
     rebuildFlagRef.current.lightingDirty = true;
+  }, [settings.timeOfDay]);
+
+  useEffect(() => {
+    rebuildFlagRef.current.lightingDirty = true;
     rebuildFlagRef.current.trackDirty = true;
-  }, [settings.timeOfDay, settings.weather]);
+  }, [settings.weather]);
 
   useEffect(() => {
     rebuildFlagRef.current.aiDirty = true;
@@ -186,7 +205,13 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
   useEffect(() => {
     rebuildFlagRef.current.sessionResetDirty = true;
-  }, [raceSessionId, gameMode]);
+  }, [raceSessionId, gameMode, parkingChallengeId]);
+
+  useEffect(() => {
+    if (screenState === 'playing') {
+      rebuildFlagRef.current.sessionResetDirty = true;
+    }
+  }, [screenState]);
 
   useEffect(() => {
     const container = canvasMountRef.current;
@@ -348,86 +373,227 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       lampPointLights.push(pl);
     }
 
-    const applySkyAndLighting = (timeOfDay: GameSettings['timeOfDay'], weather: GameSettings['weather']) => {
-      const lvl = stateRef.current.trackSpec.levelNumber;
-      let fogColor = 0x162b52;
-      let fogDensity = 0.00055;
+    const timePresetToHours = (preset: GameSettings['timeOfDay']): number => {
+      if (preset === 'morning') return 8.5;
+      if (preset === 'afternoon') return 13.5;
+      if (preset === 'sunset') return 18.6;
+      return 22.8;
+    };
 
-      if (timeOfDay === 'morning') {
-        // Bright Sunlit Morning (Level 2 default)
-        scene.background = new THREE.Color(0x38bdf8);
-        fogColor = 0x7dd3fc;
-        fogDensity = 0.00042;
-        ambientLight.color.setHex(0x64748b);
-        ambientLight.intensity = 0.95;
-        hemiLight.color.setHex(0xbae6fd);
-        hemiLight.groundColor.setHex(0x3f4d34);
-        hemiLight.intensity = 0.98;
-        keyLight.color.setHex(0xfef08a);
-        keyLight.intensity = 1.7;
-        renderer.toneMappingExposure = 1.52;
-      } else if (timeOfDay === 'afternoon') {
-        // Crisp Daylight Blue
-        scene.background = new THREE.Color(0x2563eb);
-        fogColor = 0x60a5fa;
-        fogDensity = 0.00042;
-        ambientLight.color.setHex(0x64748b);
-        ambientLight.intensity = 0.92;
-        hemiLight.color.setHex(0x93c5fd);
-        hemiLight.groundColor.setHex(0x334155);
-        hemiLight.intensity = 0.95;
-        keyLight.color.setHex(0xffffff);
-        keyLight.intensity = 1.7;
-        renderer.toneMappingExposure = 1.52;
-      } else if (timeOfDay === 'sunset') {
-        // Golden Amber Canyon Sunset (Level 3 default)
-        scene.background = new THREE.Color(0x7c2d12);
-        fogColor = 0xc2410c;
-        fogDensity = 0.00052;
-        ambientLight.color.setHex(0x78350f);
-        ambientLight.intensity = 0.88;
-        hemiLight.color.setHex(0xfdba74);
-        hemiLight.groundColor.setHex(0x431407);
-        hemiLight.intensity = 0.92;
-        keyLight.color.setHex(0xfb923c);
-        keyLight.intensity = 1.62;
-        renderer.toneMappingExposure = 1.5;
-      } else {
-        // Clear, Luminous Cobalt Night (Levels 1, 4, 5)
-        const nightTint = lvl === 5 ? 0x1e1b4b : lvl === 4 ? 0x0f294a : 0x15284d;
-        scene.background = new THREE.Color(nightTint);
-        fogColor = nightTint;
-        fogDensity = 0.00058;
-        ambientLight.color.setHex(0x334b78);
-        ambientLight.intensity = 0.86;
-        hemiLight.color.setHex(0x60a5fa);
-        hemiLight.groundColor.setHex(0x1e293b);
-        hemiLight.intensity = 0.92;
-        keyLight.color.setHex(0xbfdbfe);
-        keyLight.intensity = 1.48;
-        renderer.toneMappingExposure = 1.52;
+    const _bgCol = new THREE.Color();
+    const _fogCol = new THREE.Color();
+    const _ambCol = new THREE.Color();
+    const _hemiSkyCol = new THREE.Color();
+    const _hemiGndCol = new THREE.Color();
+    const _keyCol = new THREE.Color();
+
+    const LIGHTING_KEYFRAMES = [
+      {
+        hour: 0.0,
+        bg: new THREE.Color(0x0f1f3d),
+        fog: new THREE.Color(0x13254a),
+        amb: new THREE.Color(0x334b78),
+        ambInt: 0.86,
+        hemiSky: new THREE.Color(0x60a5fa),
+        hemiGnd: new THREE.Color(0x1e293b),
+        hemiInt: 0.90,
+        key: new THREE.Color(0xbfdbfe),
+        keyInt: 1.42,
+        fogDens: 0.00056,
+        exposure: 1.48,
+        nightFactor: 1.0,
+      },
+      {
+        hour: 5.0,
+        bg: new THREE.Color(0x15284d),
+        fog: new THREE.Color(0x1e3a70),
+        amb: new THREE.Color(0x3b5284),
+        ambInt: 0.88,
+        hemiSky: new THREE.Color(0x7dd3fc),
+        hemiGnd: new THREE.Color(0x1e293b),
+        hemiInt: 0.92,
+        key: new THREE.Color(0xbfdbfe),
+        keyInt: 1.46,
+        fogDens: 0.00054,
+        exposure: 1.48,
+        nightFactor: 0.92,
+      },
+      {
+        hour: 6.4,
+        bg: new THREE.Color(0x2563eb),
+        fog: new THREE.Color(0xfdba74),
+        amb: new THREE.Color(0x7c5846),
+        ambInt: 0.92,
+        hemiSky: new THREE.Color(0xfde68a),
+        hemiGnd: new THREE.Color(0x3f3c34),
+        hemiInt: 0.95,
+        key: new THREE.Color(0xfdba74),
+        keyInt: 1.62,
+        fogDens: 0.00048,
+        exposure: 1.50,
+        nightFactor: 0.38,
+      },
+      {
+        hour: 8.5,
+        bg: new THREE.Color(0x38bdf8),
+        fog: new THREE.Color(0x7dd3fc),
+        amb: new THREE.Color(0x64748b),
+        ambInt: 0.95,
+        hemiSky: new THREE.Color(0xbae6fd),
+        hemiGnd: new THREE.Color(0x3f4d34),
+        hemiInt: 0.98,
+        key: new THREE.Color(0xfef08a),
+        keyInt: 1.72,
+        fogDens: 0.00042,
+        exposure: 1.52,
+        nightFactor: 0.0,
+      },
+      {
+        hour: 13.5,
+        bg: new THREE.Color(0x2563eb),
+        fog: new THREE.Color(0x60a5fa),
+        amb: new THREE.Color(0x64748b),
+        ambInt: 0.94,
+        hemiSky: new THREE.Color(0x93c5fd),
+        hemiGnd: new THREE.Color(0x334155),
+        hemiInt: 0.96,
+        key: new THREE.Color(0xffffff),
+        keyInt: 1.75,
+        fogDens: 0.00040,
+        exposure: 1.52,
+        nightFactor: 0.0,
+      },
+      {
+        hour: 17.2,
+        bg: new THREE.Color(0x2563eb),
+        fog: new THREE.Color(0xfdba74),
+        amb: new THREE.Color(0x78553a),
+        ambInt: 0.90,
+        hemiSky: new THREE.Color(0xfde68a),
+        hemiGnd: new THREE.Color(0x3f2e21),
+        hemiInt: 0.94,
+        key: new THREE.Color(0xfde047),
+        keyInt: 1.68,
+        fogDens: 0.00046,
+        exposure: 1.50,
+        nightFactor: 0.15,
+      },
+      {
+        hour: 18.6,
+        bg: new THREE.Color(0x7c2d12),
+        fog: new THREE.Color(0xc2410c),
+        amb: new THREE.Color(0x78350f),
+        ambInt: 0.88,
+        hemiSky: new THREE.Color(0xfdba74),
+        hemiGnd: new THREE.Color(0x431407),
+        hemiInt: 0.92,
+        key: new THREE.Color(0xfb923c),
+        keyInt: 1.62,
+        fogDens: 0.00052,
+        exposure: 1.50,
+        nightFactor: 0.62,
+      },
+      {
+        hour: 20.6,
+        bg: new THREE.Color(0x15284d),
+        fog: new THREE.Color(0x172b54),
+        amb: new THREE.Color(0x334b78),
+        ambInt: 0.86,
+        hemiSky: new THREE.Color(0x60a5fa),
+        hemiGnd: new THREE.Color(0x1e293b),
+        hemiInt: 0.92,
+        key: new THREE.Color(0xbfdbfe),
+        keyInt: 1.46,
+        fogDens: 0.00056,
+        exposure: 1.50,
+        nightFactor: 0.95,
+      },
+      {
+        hour: 24.0,
+        bg: new THREE.Color(0x0f1f3d),
+        fog: new THREE.Color(0x13254a),
+        amb: new THREE.Color(0x334b78),
+        ambInt: 0.86,
+        hemiSky: new THREE.Color(0x60a5fa),
+        hemiGnd: new THREE.Color(0x1e293b),
+        hemiInt: 0.90,
+        key: new THREE.Color(0xbfdbfe),
+        keyInt: 1.42,
+        fogDens: 0.00056,
+        exposure: 1.48,
+        nightFactor: 1.0,
+      },
+    ];
+
+    scene.background = new THREE.Color(0x15284d);
+    scene.fog = new THREE.FogExp2(0x162b52, 0.00055);
+
+    const updateDynamicLighting = (dayTimeHours: number, weather: GameSettings['weather']) => {
+      const h = ((dayTimeHours % 24) + 24) % 24;
+      let k0 = LIGHTING_KEYFRAMES[0];
+      let k1 = LIGHTING_KEYFRAMES[LIGHTING_KEYFRAMES.length - 1];
+      for (let i = 0; i < LIGHTING_KEYFRAMES.length - 1; i++) {
+        if (h >= LIGHTING_KEYFRAMES[i].hour && h <= LIGHTING_KEYFRAMES[i + 1].hour) {
+          k0 = LIGHTING_KEYFRAMES[i];
+          k1 = LIGHTING_KEYFRAMES[i + 1];
+          break;
+        }
+      }
+      const span = Math.max(0.001, k1.hour - k0.hour);
+      const alpha = THREE.MathUtils.smoothstep((h - k0.hour) / span, 0, 1);
+
+      _bgCol.copy(k0.bg).lerp(k1.bg, alpha);
+      _fogCol.copy(k0.fog).lerp(k1.fog, alpha);
+      _ambCol.copy(k0.amb).lerp(k1.amb, alpha);
+      _hemiSkyCol.copy(k0.hemiSky).lerp(k1.hemiSky, alpha);
+      _hemiGndCol.copy(k0.hemiGnd).lerp(k1.hemiGnd, alpha);
+      _keyCol.copy(k0.key).lerp(k1.key, alpha);
+
+      const nightFactor = THREE.MathUtils.lerp(k0.nightFactor, k1.nightFactor, alpha);
+      let fogDensity = THREE.MathUtils.lerp(k0.fogDens, k1.fogDens, alpha);
+      let keyIntensity = THREE.MathUtils.lerp(k0.keyInt, k1.keyInt, alpha);
+
+      if (weather === 'fog') {
+        fogDensity = 0.0014;
+        keyIntensity *= 0.90;
+        _fogCol.lerp(new THREE.Color(0x475569), 0.35);
+      } else if (weather === 'rain') {
+        fogDensity = 0.00095;
+        keyIntensity *= 0.94;
+      } else if (weather === 'snow') {
+        fogDensity = 0.00095;
+        keyIntensity *= 0.95;
       }
 
-      const lampIntensity = timeOfDay === 'night' ? 7.5 : timeOfDay === 'sunset' ? 5.2 : 2.5;
+      if (scene.background instanceof THREE.Color) {
+        scene.background.copy(_bgCol);
+      }
+      if (scene.fog instanceof THREE.FogExp2) {
+        scene.fog.color.copy(_fogCol);
+        scene.fog.density = fogDensity;
+      }
+
+      ambientLight.color.copy(_ambCol);
+      ambientLight.intensity = THREE.MathUtils.lerp(k0.ambInt, k1.ambInt, alpha);
+      hemiLight.color.copy(_hemiSkyCol);
+      hemiLight.groundColor.copy(_hemiGndCol);
+      hemiLight.intensity = THREE.MathUtils.lerp(k0.hemiInt, k1.hemiInt, alpha);
+      keyLight.color.copy(_keyCol);
+      keyLight.intensity = keyIntensity;
+      renderer.toneMappingExposure = THREE.MathUtils.lerp(k0.exposure, k1.exposure, alpha);
+
+      const lampIntensity = THREE.MathUtils.lerp(0.8, 7.8, nightFactor);
       for (const pl of lampPointLights) {
         pl.intensity = lampIntensity;
       }
 
-      if (weather === 'fog') {
-        fogDensity = 0.0014;
-        keyLight.intensity *= 0.92;
-      } else if (weather === 'rain') {
-        fogDensity = 0.00095;
-        keyLight.intensity *= 0.95;
-      } else if (weather === 'snow') {
-        fogDensity = 0.00095;
-        keyLight.intensity *= 0.95;
-      }
-
-      scene.fog = new THREE.FogExp2(fogColor, fogDensity);
+      return nightFactor;
     };
 
-    applySkyAndLighting(stateRef.current.settings.timeOfDay, stateRef.current.settings.weather);
+    updateDynamicLighting(
+      timePresetToHours(stateRef.current.settings.timeOfDay),
+      stateRef.current.settings.weather
+    );
 
     // 4. Procedural PBR Textures, Circular Smoke/Nitro/Spark Particle Pools & Weather Particles
     const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -490,6 +656,205 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
     let aiCars: AICarEntity[] = [];
 
+    // =========================================================================
+    // 5B. CAR PARKING MULTIPLAYER: 3D PARKING CHALLENGE COURSE, GAS STATION & FREE WALK AVATAR
+    // =========================================================================
+    const parkingGroup = new THREE.Group();
+    scene.add(parkingGroup);
+
+    const bayFillMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.32,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    const bayBorderMat = new THREE.MeshBasicMaterial({
+      color: 0x22c55e,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    });
+    const parkingBayGroup = new THREE.Group();
+    const bayPadMesh = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 5.6), bayFillMat);
+    bayPadMesh.rotation.x = -Math.PI / 2;
+    bayPadMesh.position.y = 0.05;
+    parkingBayGroup.add(bayPadMesh);
+
+    // 4 Glowing Corner Borders + Direction Arrow inside the Parking Bay [P]
+    const borderLongGeo = new THREE.PlaneGeometry(0.16, 5.6);
+    borderLongGeo.rotateX(-Math.PI / 2);
+    const borderShortGeo = new THREE.PlaneGeometry(2.9, 0.16);
+    borderShortGeo.rotateX(-Math.PI / 2);
+    for (const sx of [-1.42, 1.42]) {
+      const m = new THREE.Mesh(borderLongGeo, bayBorderMat);
+      m.position.set(sx, 0.055, 0);
+      parkingBayGroup.add(m);
+    }
+    for (const sz of [-2.76, 2.76]) {
+      const m = new THREE.Mesh(borderShortGeo, bayBorderMat);
+      m.position.set(0, 0.055, sz);
+      parkingBayGroup.add(m);
+    }
+    // Direction Arrow pointing toward -Z (Forward orientation inside bay)
+    const arrowShape = new THREE.Shape();
+    arrowShape.moveTo(0, 1.3);
+    arrowShape.lineTo(0.65, 0.2);
+    arrowShape.lineTo(0.24, 0.2);
+    arrowShape.lineTo(0.24, -1.2);
+    arrowShape.lineTo(-0.24, -1.2);
+    arrowShape.lineTo(-0.24, 0.2);
+    arrowShape.lineTo(-0.65, 0.2);
+    arrowShape.closePath();
+    const arrowGeo = new THREE.ShapeGeometry(arrowShape);
+    arrowGeo.rotateX(-Math.PI / 2);
+    const arrowMesh = new THREE.Mesh(arrowGeo, bayBorderMat);
+    arrowMesh.position.set(0, 0.06, 0);
+    parkingBayGroup.add(arrowMesh);
+    parkingGroup.add(parkingBayGroup);
+
+    const coneOrangeMat = new THREE.MeshStandardMaterial({
+      color: 0xf97316,
+      roughness: 0.4,
+      emissive: 0xea580c,
+      emissiveIntensity: 0.25,
+    });
+    const coneWhiteMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.3,
+    });
+    const coneBaseGeo = new THREE.BoxGeometry(0.46, 0.05, 0.46);
+    const coneBodyGeo = new THREE.ConeGeometry(0.18, 0.68, 12);
+    const coneStripeGeo = new THREE.CylinderGeometry(0.08, 0.12, 0.20, 12);
+
+    const activeCones: Array<{ group: THREE.Group; x: number; z: number; hit: boolean }> = [];
+    let parkingBayTarget = { x: 0, z: -40, heading: 0 };
+
+    const rebuildParkingCourse = () => {
+      for (const c of activeCones) {
+        parkingGroup.remove(c.group);
+      }
+      activeCones.length = 0;
+
+      const isParking = stateRef.current.gameMode === 'parking';
+      parkingGroup.visible = isParking;
+      if (!isParking) return;
+
+      const challenge =
+        PARKING_CHALLENGES.find((c) => c.id === stateRef.current.parkingChallengeId) ||
+        PARKING_CHALLENGES[0];
+
+      const sRef = builtTrack.samples[4] || builtTrack.samples[0];
+      const baseHeading = 0; // Along -Z on the flat start straight
+      const originX = sRef.point.x;
+      const originZ = sRef.point.z;
+
+      // Bay world position (fwd along -Z, lat along +X)
+      parkingBayTarget = {
+        x: originX + challenge.bayLatOffset,
+        z: originZ - challenge.bayForwardDist,
+        heading: baseHeading + challenge.bayHeadingOffset,
+      };
+      parkingBayGroup.position.set(parkingBayTarget.x, 0, parkingBayTarget.z);
+      parkingBayGroup.rotation.set(0, parkingBayTarget.heading, 0);
+
+      for (const coneDef of challenge.cones) {
+        const cg = new THREE.Group();
+        const baseM = new THREE.Mesh(coneBaseGeo, coneOrangeMat);
+        baseM.position.y = 0.025;
+        const bodyM = new THREE.Mesh(coneBodyGeo, coneOrangeMat);
+        bodyM.position.y = 0.36;
+        const stripeM = new THREE.Mesh(coneStripeGeo, coneWhiteMat);
+        stripeM.position.y = 0.40;
+        cg.add(baseM, bodyM, stripeM);
+
+        const cx = originX + coneDef.lat;
+        const cz = originZ - coneDef.fwd;
+        cg.position.set(cx, 0.02, cz);
+        parkingGroup.add(cg);
+        activeCones.push({ group: cg, x: cx, z: cz, hit: false });
+      }
+    };
+
+    // 3D Roadside Gas Station (Station-Service 24/7)
+    const gasStationGroup = new THREE.Group();
+    const buildGasStation = () => {
+      const canopyMat = new THREE.MeshStandardMaterial({
+        color: 0x059669,
+        emissive: 0x10b981,
+        emissiveIntensity: 0.45,
+        roughness: 0.3,
+      });
+      const pillarMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.4 });
+      const pumpMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.35 });
+      const padMat = new THREE.MeshBasicMaterial({
+        color: 0x22c55e,
+        transparent: true,
+        opacity: 0.28,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.65, 11.0), canopyMat);
+      canopy.position.set(0, 4.4, 0);
+      gasStationGroup.add(canopy);
+
+      for (const pz of [-4.2, 4.2]) {
+        const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 4.4, 12), pillarMat);
+        pillar.position.set(1.8, 2.2, pz);
+        gasStationGroup.add(pillar);
+
+        const pump = new THREE.Mesh(new THREE.BoxGeometry(0.75, 1.65, 0.95), pumpMat);
+        pump.position.set(0.4, 0.85, pz * 0.5);
+        gasStationGroup.add(pump);
+      }
+
+      const refuelPad = new THREE.Mesh(new THREE.PlaneGeometry(5.5, 10.0), padMat);
+      refuelPad.rotation.x = -Math.PI / 2;
+      refuelPad.position.set(-1.5, 0.045, 0);
+      gasStationGroup.add(refuelPad);
+    };
+    buildGasStation();
+    scene.add(gasStationGroup);
+
+    const positionGasStationOnTrack = () => {
+      const sGas = builtTrack.samples[18] || builtTrack.samples[0];
+      const roadHalf = builtTrack.roadWidth / 2;
+      const gx = sGas.point.x + sGas.normal.x * (roadHalf + 4.8);
+      const gz = sGas.point.z + sGas.normal.z * (roadHalf + 4.8);
+      const gHeading = Math.atan2(-sGas.tangent.x, -sGas.tangent.z);
+      gasStationGroup.position.set(gx, 0, gz);
+      gasStationGroup.rotation.set(0, gHeading, 0);
+    };
+    positionGasStationOnTrack();
+
+    // 3D Free-Walking Driver Avatar (Mode Piéton)
+    const walkerGroup = new THREE.Group();
+    const walkerLeftLeg = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 0.72, 0.18),
+      new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 })
+    );
+    const walkerRightLeg = walkerLeftLeg.clone();
+    walkerLeftLeg.position.set(-0.11, 0.36, 0);
+    walkerRightLeg.position.set(0.11, 0.36, 0);
+    const walkerTorso = new THREE.Mesh(
+      new THREE.BoxGeometry(0.44, 0.62, 0.24),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 })
+    );
+    walkerTorso.position.set(0, 1.03, 0);
+    const walkerHead = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 14, 14),
+      new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.45 })
+    );
+    walkerHead.position.set(0, 1.52, 0);
+    walkerGroup.add(walkerLeftLeg, walkerRightLeg, walkerTorso, walkerHead);
+    walkerGroup.visible = false;
+    scene.add(walkerGroup);
+
     const clearAICars = () => {
       for (const ai of aiCars) {
         scene.remove(ai.rig.root);
@@ -502,7 +867,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       clearAICars();
       const mode = stateRef.current.gameMode;
       const track = stateRef.current.trackSpec;
-      if (mode === 'time_attack' || mode === 'exploration') return;
+      if (mode === 'time_attack' || mode === 'exploration' || mode === 'parking') return;
 
       let count = 0;
       if (mode === 'race') {
@@ -517,11 +882,15 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       for (let i = 0; i < count; i++) {
         const spec = CARS[(i + 1) % CARS.length];
         const aiColor = AI_COLORS[i % AI_COLORS.length];
+        const aiRimStyles = ['amg_multi', 'gt_five_spoke', 'bbs_mesh', 'aero_turbine'] as const;
+        const aiBodyKits = ['stock', 'sport_aero', 'gt3_widebody'] as const;
         const rig = buildSportsCarModel(
           spec,
           {
             bodyColor: aiColor,
             rimColor: '#e2e8f0',
+            rimStyle: aiRimStyles[i % aiRimStyles.length],
+            bodyKit: aiBodyKits[i % aiBodyKits.length],
             finish: 'metallic',
             headlightColor: '#ffffff',
             neonUnderglow: false,
@@ -662,6 +1031,26 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       bannerText: null as string | null,
       bannerTimer: 0,
       showcaseAngle: 0.45,
+      dayTimeHours: timePresetToHours(stateRef.current.settings.timeOfDay),
+      // Car Parking Multiplayer State
+      shifterPos: 'D' as ShifterPosition,
+      handbrakePulled: false,
+      leftSignal: false,
+      rightSignal: false,
+      hazardLights: false,
+      lastSignalTickState: false,
+      engineRunning: true,
+      fuelPercent: 100,
+      nearGasStation: false,
+      isWalking: false,
+      walkX: 0,
+      walkZ: 0,
+      walkHeading: 0,
+      walkCycle: 0,
+      parkingStatus: 'approaching' as 'approaching' | 'inside' | 'aligned' | 'parked_success' | 'cone_hit',
+      parkingProgressPct: 0,
+      parkingDistanceMeters: 0,
+      parkingHoldTimer: 0,
     };
 
     const setBanner = (text: string, duration = 2.6) => {
@@ -725,13 +1114,35 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
     const resetSession = () => {
       const isStraight = Boolean(stateRef.current.trackSpec.isStraight);
-      const sStart = isStraight ? builtTrack.samples[12] : (builtTrack.samples[1] || builtTrack.samples[0]);
-      const spawnLatOffset = isStraight ? -2.2 : 2.8;
-      phys.x = isStraight ? -2.2 : (sStart.point.x - sStart.normal.x * spawnLatOffset);
-      phys.y = sStart.point.y + 0.04;
-      phys.z = isStraight ? sStart.point.z : (sStart.point.z - sStart.normal.z * spawnLatOffset);
-      phys.heading = isStraight ? 0 : Math.atan2(-sStart.tangent.x, -sStart.tangent.z);
-      phys.roadPitch = isStraight ? 0 : sStart.pitch;
+      const isParking = stateRef.current.gameMode === 'parking';
+      const sStart = isStraight && !isParking ? builtTrack.samples[12] : (builtTrack.samples[4] || builtTrack.samples[0]);
+
+      rebuildParkingCourse();
+      positionGasStationOnTrack();
+
+      if (isParking) {
+        const challenge =
+          PARKING_CHALLENGES.find((c) => c.id === stateRef.current.parkingChallengeId) ||
+          PARKING_CHALLENGES[0];
+        phys.x = sStart.point.x + challenge.startLatOffset;
+        phys.y = 0.04;
+        phys.z = sStart.point.z - challenge.startForwardDist;
+        phys.heading = challenge.startHeadingOffset;
+        phys.shifterPos = 'D';
+        touchInputRef.current.shifterPos = 'D';
+        phys.countdownTimer = 0;
+      } else {
+        const spawnLatOffset = isStraight ? -2.2 : 2.8;
+        phys.x = isStraight ? -2.2 : (sStart.point.x - sStart.normal.x * spawnLatOffset);
+        phys.y = 0.04;
+        phys.z = isStraight ? sStart.point.z : (sStart.point.z - sStart.normal.z * spawnLatOffset);
+        phys.heading = 0; // Perfectly aligned straight ahead along -Z on the starting grid
+        phys.shifterPos = 'D';
+        touchInputRef.current.shifterPos = 'D';
+        phys.countdownTimer = 0;
+      }
+
+      phys.roadPitch = 0;
       phys.speedMs = 0;
       phys.prevSpeedMs = 0;
       phys.longitudinalAccelG = 0;
@@ -762,7 +1173,6 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       phys.elapsedTime = 0;
       phys.currentLapTime = 0;
       phys.bestLapTime = null;
-      phys.countdownTimer = 3.0;
       phys.goBannerTimer = 0;
       phys.lastBeepSecond = 4;
       phys.raceFinished = false;
@@ -775,6 +1185,23 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       phys.finalStandings = null;
       phys.bannerText = null;
       phys.bannerTimer = 0;
+      phys.handbrakePulled = false;
+      phys.engineRunning = true;
+      phys.fuelPercent = 100;
+      phys.isWalking = false;
+      walkerGroup.visible = false;
+      phys.parkingStatus = 'approaching';
+      phys.parkingProgressPct = 0;
+      phys.parkingHoldTimer = 0;
+
+      // Clear any residual steering or pedal state so the car never moves or turns at start
+      touchInputRef.current.steerInput = 0;
+      touchInputRef.current.left = false;
+      touchInputRef.current.right = false;
+      touchInputRef.current.throttle = false;
+      touchInputRef.current.brake = false;
+      touchInputRef.current.nitro = false;
+      touchInputRef.current.handbrake = false;
 
       for (const b of builtTrack.beacons) {
         b.collected = false;
@@ -783,13 +1210,27 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
       spawnAICars();
 
+      const rideOffset = Number(playerCar.bodyGroup.userData.rideHeightOffset || 0);
       playerCar.root.position.set(phys.x, phys.y, phys.z);
-      playerCar.root.rotation.set(phys.roadPitch, phys.heading, 0, 'YXZ');
+      playerCar.root.rotation.set(0, phys.heading, 0, 'YXZ');
+      playerCar.bodyGroup.position.set(0, rideOffset, 0);
+      playerCar.bodyGroup.rotation.set(0, 0, 0);
+      playerCar.frontLeftPivot.rotation.set(0, 0, 0);
+      playerCar.frontRightPivot.rotation.set(0, 0, 0);
+      playerCar.steeringWheel.rotation.set(0, 0, 0);
 
       const sinH = Math.sin(phys.heading);
       const cosH = Math.cos(phys.heading);
-      camera.position.set(phys.x + sinH * 4.65, phys.y + 1.98, phys.z + cosH * 4.65);
-      _smoothedLookAt.set(phys.x - sinH * 6.2, phys.y + 0.88, phys.z - cosH * 6.2);
+      const camMode = stateRef.current.settings.cameraMode;
+      const distOffset = stateRef.current.settings.cameraDistanceOffset || 0;
+      const isNear = camMode === 'chase_near';
+      const distBack = (isNear ? 4.65 : 8.2) + distOffset;
+      const camHeight = (isNear ? 1.98 : 3.2) + distOffset * 0.18;
+      const lookAheadDist = isNear ? 6.2 : 10.0;
+      const lookHeight = isNear ? 0.88 : 1.15;
+
+      camera.position.set(phys.x + sinH * distBack, phys.y + camHeight, phys.z + cosH * distBack);
+      _smoothedLookAt.set(phys.x - sinH * lookAheadDist, phys.y + lookHeight, phys.z - cosH * lookAheadDist);
       camera.lookAt(_smoothedLookAt);
     };
 
@@ -848,7 +1289,18 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
         touchInputRef.current.shiftDownQueued = true;
       }
       if (code === 'KeyR' && stateRef.current.screenState === 'playing') {
-        respawnCar();
+        if (stateRef.current.gameMode === 'parking') {
+          resetSession();
+        } else {
+          respawnCar();
+        }
+      }
+      if (code === 'KeyP' && stateRef.current.screenState === 'playing') {
+        touchInputRef.current.shifterPos = touchInputRef.current.shifterPos === 'P' ? 'D' : 'P';
+        touchInputRef.current.handbrake = touchInputRef.current.shifterPos === 'P';
+      }
+      if (code === 'KeyH' && stateRef.current.screenState === 'playing') {
+        soundEngine.playHorn(0.32);
       }
 
       if (code === 'Escape' && (stateRef.current.screenState === 'playing' || stateRef.current.screenState === 'paused')) {
@@ -888,6 +1340,32 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       }
     };
 
+    // Interactive 360° Showroom Camera Drag (Car Parking Multiplayer Garage/Hub)
+    let isDraggingShowroom = false;
+    let dragLastX = 0;
+    let showcaseUserControlTimer = 0;
+
+    const handleShowroomPointerDown = (e: PointerEvent) => {
+      if (stateRef.current.screenState === 'playing') return;
+      isDraggingShowroom = true;
+      dragLastX = e.clientX;
+      showcaseUserControlTimer = 4.5;
+    };
+    const handleShowroomPointerMove = (e: PointerEvent) => {
+      if (!isDraggingShowroom || stateRef.current.screenState === 'playing') return;
+      const dx = e.clientX - dragLastX;
+      dragLastX = e.clientX;
+      phys.showcaseAngle -= dx * 0.0085;
+      showcaseUserControlTimer = 4.5;
+    };
+    const handleShowroomPointerUp = () => {
+      isDraggingShowroom = false;
+    };
+
+    window.addEventListener('pointerdown', handleShowroomPointerDown);
+    window.addEventListener('pointermove', handleShowroomPointerMove);
+    window.addEventListener('pointerup', handleShowroomPointerUp);
+    window.addEventListener('pointercancel', handleShowroomPointerUp);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleBlur);
@@ -958,8 +1436,9 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
       if (rebuildFlagRef.current.lightingDirty) {
         rebuildFlagRef.current.lightingDirty = false;
-        applySkyAndLighting(stateRef.current.settings.timeOfDay, stateRef.current.settings.weather);
-        phys.headlightsOn = true;
+        phys.dayTimeHours = timePresetToHours(stateRef.current.settings.timeOfDay);
+        updateDynamicLighting(phys.dayTimeHours, stateRef.current.settings.weather);
+        builtTrack.updateDayNight(phys.dayTimeHours, stateRef.current.settings.weather);
       }
 
       if (rebuildFlagRef.current.trackDirty) {
@@ -1019,6 +1498,15 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       const isPlaying = currentScreen === 'playing';
       const currentWeather = stateRef.current.settings.weather;
 
+      // PROGRESSIVE DYNAMIC DAY/NIGHT CYCLE (Visible in Free Drive, Race, Time Attack, Exploration & Menu)
+      if (stateRef.current.settings.dynamicDayNight && currentScreen !== 'paused') {
+        const cycleSpeed = stateRef.current.settings.dayNightSpeed || 1.0;
+        // 1 full 24h cycle in ~110 seconds at 1x speed (~0.22 hours per real second)
+        phys.dayTimeHours = (phys.dayTimeHours + dt * 0.22 * cycleSpeed) % 24;
+      }
+      const nightFactor = updateDynamicLighting(phys.dayTimeHours, currentWeather);
+      builtTrack.updateDayNight(phys.dayTimeHours, currentWeather);
+
       // Update 3D Snow Particles around the Car (Removed for rain so no blurry squares float on screen)
       if (currentWeather === 'snow') {
         precipPoints.visible = true;
@@ -1047,34 +1535,39 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
         builtTrack.updateBeacons(elapsed);
       }
 
-      const headIntensity = phys.headlightsOn ? 3.5 : 0.25;
+      const effectiveHeadlightsOn = phys.headlightsOn && (nightFactor > 0.28 || currentWeather !== 'clear');
+      const headIntensity = effectiveHeadlightsOn ? 3.5 : 1.1;
       playerCar.headlightMaterial.emissiveIntensity = headIntensity;
       for (const spot of playerCar.headlightSpots) {
-        spot.intensity = phys.headlightsOn ? 95 : 0;
+        spot.intensity = effectiveHeadlightsOn ? 95 : 0;
       }
       for (const beam of playerCar.headlightBeams) {
-        beam.visible = phys.headlightsOn;
+        beam.visible = effectiveHeadlightsOn;
       }
 
       const isLookingBack = Boolean(keys.lookBack || touchInputRef.current.lookBack);
 
       if (currentScreen !== 'playing' && currentScreen !== 'paused' && currentScreen !== 'finished') {
-        // SHOWCASE / GARAGE / MENU CAMERA ORBIT + VISIBLE CARS DRIVING ON THE HIGHWAY
-        phys.showcaseAngle += dt * 0.22;
+        // SHOWCASE / GARAGE / MENU CAMERA ORBIT + INTERACTIVE 360° DRAG AROUND CAR
+        if (showcaseUserControlTimer > 0) {
+          showcaseUserControlTimer = Math.max(0, showcaseUserControlTimer - dt);
+        } else {
+          phys.showcaseAngle += dt * 0.24;
+        }
         const isGarageView = currentScreen === 'garage' || currentScreen === 'car_select';
-        const radius = isGarageView ? 6.6 : 8.5;
-        const height = isGarageView ? 2.25 : 3.2;
-        const angleOffset = isGarageView ? phys.showcaseAngle : Math.sin(phys.showcaseAngle) * 0.55;
+        const radius = isGarageView ? 6.1 : 6.6;
+        const height = isGarageView ? 2.05 : 2.2;
+        const angleOffset = phys.showcaseAngle;
         const targetX = phys.x + Math.sin(phys.heading + angleOffset) * radius;
         const targetZ = phys.z + Math.cos(phys.heading + angleOffset) * radius;
 
-        camera.position.x = THREE.MathUtils.damp(camera.position.x, targetX, 5, dt);
-        camera.position.y = THREE.MathUtils.damp(camera.position.y, phys.y + height, 5, dt);
-        camera.position.z = THREE.MathUtils.damp(camera.position.z, targetZ, 5, dt);
+        camera.position.x = THREE.MathUtils.damp(camera.position.x, targetX, 8, dt);
+        camera.position.y = THREE.MathUtils.damp(camera.position.y, phys.y + height, 8, dt);
+        camera.position.z = THREE.MathUtils.damp(camera.position.z, targetZ, 8, dt);
         _camLookAt.set(
-          phys.x - Math.sin(phys.heading) * (isGarageView ? 0 : 12),
-          phys.y + (isGarageView ? 0.95 : 1.35),
-          phys.z - Math.cos(phys.heading) * (isGarageView ? 0 : 12)
+          phys.x,
+          phys.y + (isGarageView ? 0.78 : 0.88),
+          phys.z
         );
         camera.lookAt(_camLookAt);
 
@@ -1089,9 +1582,13 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           }
         }
         playerCar.bodyGroup.rotation.set(0, 0, 0);
-        playerCar.bodyGroup.position.set(0, 0, 0);
+        const garageRideHeightOffset = Number(playerCar.bodyGroup.userData.rideHeightOffset || 0);
+        playerCar.bodyGroup.position.set(0, garageRideHeightOffset, 0);
         playerCar.root.position.set(phys.x, phys.y, phys.z);
         playerCar.root.rotation.set(phys.roadPitch, phys.heading, 0, 'YXZ');
+        for (const m of playerCar.cockpitOccludingMeshes) {
+          m.visible = true;
+        }
 
         soundEngine.updateEngine(1000, 0, false, false);
       } else if (isPlaying) {
@@ -1208,468 +1705,689 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           const brakePressed = keys.down || tInput.brake;
           const nitroPressed = keys.nitro || tInput.nitro;
 
-          const isManual = stateRef.current.settings.transmission === 'manual';
-
-          // Nitro Logic
-          if (nitroPressed && phys.nitro > 5 && throttlePressed && Math.abs(phys.speedMs) > 10) {
-            phys.nitroActive = true;
-            phys.nitro = Math.max(0, phys.nitro - dt * 28);
-          } else {
-            phys.nitroActive = false;
-            phys.nitro = Math.min(100, phys.nitro + dt * 9);
+          // Sync Car Parking Multiplayer Cockpit Controls
+          if (tInput.shifterPos) {
+            phys.shifterPos = tInput.shifterPos;
           }
+          // Pédale AVANCER / GAZ : passe automatiquement en D (Marche Avant), desserre le frein à main et démarre le moteur
+          if (throttlePressed) {
+            phys.shifterPos = 'D';
+            tInput.shifterPos = 'D';
+            tInput.brake = false;
+            if (tInput.handbrake) {
+              tInput.handbrake = false;
+            }
+            if (!phys.engineRunning) {
+              phys.engineRunning = true;
+            }
+          } else if (brakePressed) {
+            if (tInput.handbrake) {
+              tInput.handbrake = false;
+            }
+            if (!phys.engineRunning) {
+              phys.engineRunning = true;
+            }
+            if (phys.speedMs <= 0.25) {
+              phys.shifterPos = 'R';
+              tInput.shifterPos = 'R';
+            }
+          }
+          phys.handbrakePulled = Boolean(tInput.handbrake);
+          phys.leftSignal = Boolean(tInput.leftSignal);
+          phys.rightSignal = Boolean(tInput.rightSignal);
+          phys.hazardLights = Boolean(tInput.hazardLights);
+
+          if (tInput.toggleHeadlightsQueued) {
+            tInput.toggleHeadlightsQueued = false;
+            phys.headlightsOn = !phys.headlightsOn;
+          }
+          if (tInput.toggleEngineQueued) {
+            tInput.toggleEngineQueued = false;
+            phys.engineRunning = !phys.engineRunning;
+            setBanner(phys.engineRunning ? 'MOTEUR DÉMARRÉ' : 'MOTEUR ARRÊTÉ', 1.8);
+          }
+          if (tInput.toggleWalkQueued) {
+            tInput.toggleWalkQueued = false;
+            if (!phys.isWalking && Math.abs(phys.speedMs) < 3.5) {
+              phys.isWalking = true;
+              phys.speedMs = 0;
+              phys.shifterPos = 'P';
+              tInput.shifterPos = 'P';
+              const rX = Math.cos(phys.heading);
+              const rZ = -Math.sin(phys.heading);
+              phys.walkX = phys.x - rX * 1.85;
+              phys.walkZ = phys.z - rZ * 1.85;
+              phys.walkHeading = phys.heading;
+              walkerGroup.visible = true;
+              walkerGroup.position.set(phys.walkX, 0.04, phys.walkZ);
+              walkerGroup.rotation.set(0, phys.walkHeading, 0);
+              setBanner('MODE PIÉTON ACTIF — MARCHEZ AUTOUR DU VÉHICULE', 2.4);
+            } else if (phys.isWalking) {
+              phys.isWalking = false;
+              walkerGroup.visible = false;
+              phys.shifterPos = 'D';
+              tInput.shifterPos = 'D';
+              setBanner('À BORD DU VÉHICULE', 1.8);
+            } else {
+              setBanner('ARRÊTEZ LA VOITURE POUR SORTIR À PIED', 2.0);
+            }
+          }
+
+          // Check Gas Station Proximity & Refueling
+          const gDx = phys.x - gasStationGroup.position.x;
+          const gDz = phys.z - gasStationGroup.position.z;
+          phys.nearGasStation = gDx * gDx + gDz * gDz < 14 * 14;
+          if (tInput.refuelQueued || (phys.nearGasStation && Math.abs(phys.speedMs) < 0.8 && phys.fuelPercent < 99.5)) {
+            if (tInput.refuelQueued) {
+              tInput.refuelQueued = false;
+              phys.fuelPercent = 100;
+              setBanner('PLEIN D’ESSENCE EFFECTUÉ (100%) !', 2.4);
+            } else {
+              phys.fuelPercent = Math.min(100, phys.fuelPercent + dt * 18);
+            }
+          }
+
+          const isManual = stateRef.current.settings.transmission === 'manual';
 
           // Check for queued car respawn / unstick
           if (tInput.respawnQueued) {
             tInput.respawnQueued = false;
-            respawnCar();
+            if (stateRef.current.gameMode === 'parking') {
+              resetSession();
+            } else {
+              respawnCar();
+            }
           }
 
-          // 1. Steering Input: -1 (Gauche) to +1 (Droite) matching Unity CarSteering
+          // 1. Steering Input: -1 (Gauche) to +1 (Droite)
           const keySteer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
           const rawWheelSteer = tInput.steerInput;
           const rawSteerInput = Math.abs(rawWheelSteer) > 0.01 ? rawWheelSteer : keySteer;
           const steerInput = THREE.MathUtils.clamp(rawSteerInput, -1.0, 1.0);
 
-          // Track surface classification & base friction
-          const closest = builtTrack.getClosestSample(phys.x, phys.z);
-          const halfRoad = builtTrack.roadWidth / 2;
-          const absLat = Math.abs(closest.signedLateralDist);
+          if (phys.isWalking) {
+            // Free-Walking Pedestrian Movement around the Parked Car
+            const walkTurn = -steerInput * 2.4 * dt;
+            phys.walkHeading += walkTurn;
+            const walkSpeed = throttlePressed ? 4.2 : brakePressed ? -2.8 : 0;
+            const wfX = -Math.sin(phys.walkHeading);
+            const wfZ = -Math.cos(phys.walkHeading);
+            phys.walkX += wfX * walkSpeed * dt;
+            phys.walkZ += wfZ * walkSpeed * dt;
 
-          let baseSurfaceGrip = 1.0;
-          if (absLat <= halfRoad - 0.2) {
-            phys.surfaceType = 'asphalt';
-            baseSurfaceGrip = currentWeather === 'rain' ? 0.88 : currentWeather === 'snow' ? 0.72 : 1.0;
-          } else if (absLat <= halfRoad + 0.85) {
-            phys.surfaceType = 'kerb';
-            baseSurfaceGrip = 0.84;
-          } else {
-            phys.surfaceType = 'shoulder';
-            baseSurfaceGrip = 0.58;
-          }
-
-          const speedAbs = Math.abs(phys.speedMs);
-          const speedKmh = speedAbs * 3.6;
-          const isReversing = phys.speedMs < -0.1 || (brakePressed && phys.speedMs < 0.2);
-
-          // 5. Appui aérodynamique & charge verticale (Unity CarSteering: downforce = 30f)
-          const downforceFactor = 1.0 + (30.0 / 1200.0) * THREE.MathUtils.clamp(speedKmh / 100.0, 0, 2.5);
-          phys.gripFactor = baseSurfaceGrip * downforceFactor;
-
-          // 6. PHYSIQUE : vitesse avant + latérale, adhérence limitée, sous-pas fixes (120 Hz max)
-          phys.prevSpeedMs = phys.speedMs;
-          const baseMaxSpeed =
-            (stateRef.current.carSpec.maxSpeedKmh / 3.6) * (phys.nitroActive ? 1.18 : 1.0);
-          const maxSpeed =
-            phys.surfaceType === 'shoulder' ? Math.min(baseMaxSpeed, 28) : baseMaxSpeed;
-
-          const dynInput: CarDynInput = {
-            steerInput,
-            throttle: Boolean(throttlePressed),
-            brake: Boolean(brakePressed),
-            canDrive,
-            nitroActive: phys.nitroActive,
-            sensitivity: stateRef.current.settings.steeringSensitivity,
-            gripFactor: phys.gripFactor,
-            maxSpeedMs: maxSpeed,
-            acceleration: stateRef.current.carSpec.acceleration,
-            braking: stateRef.current.carSpec.braking,
-            handling: stateRef.current.carSpec.handling,
-            offRoad: phys.surfaceType === 'shoulder',
-          };
-          stepCarDynamicsSubsteps(phys, dynInput, dt);
-
-          // 8. Electronic Stability Program (ESP) & Direction Assistée
-          const espActive = stateRef.current.settings.absEspEnabled !== false;
-          if (espActive && speedAbs > 8) {
-            const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
-            let headingDiff = trackHeading - phys.heading;
-            while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
-            while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
-
-            const isActivelySteering = Math.abs(steerInput) > 0.02;
-            if (!isActivelySteering && phys.surfaceType === 'asphalt') {
-              if (Math.abs(headingDiff) < 0.24) {
-                const alignSpeed = stateRef.current.trackSpec.isStraight ? 2.5 : 3.5;
-                phys.heading += headingDiff * alignSpeed * dt;
-              }
-            } else if (isActivelySteering && Math.abs(headingDiff) > 0.45) {
-              const antiSpinDamp = THREE.MathUtils.clamp((speedKmh / 280.0) * 2.0, 0.6, 2.2);
-              phys.heading += headingDiff * antiSpinDamp * dt;
+            // Keep walker from walking inside the parked car box
+            const cdx = phys.walkX - phys.x;
+            const cdz = phys.walkZ - phys.z;
+            const cDistSq = cdx * cdx + cdz * cdz;
+            if (cDistSq < 2.1 * 2.1 && cDistSq > 0.001) {
+              const cDist = Math.sqrt(cDistSq);
+              phys.walkX = phys.x + (cdx / cDist) * 2.1;
+              phys.walkZ = phys.z + (cdz / cDist) * 2.1;
             }
-          }
 
-          // Road height & pitch alignment
-          phys.y = THREE.MathUtils.damp(phys.y, closest.sample.point.y + 0.04, 28, dt);
-          phys.roadPitch = THREE.MathUtils.damp(phys.roadPitch, closest.sample.pitch, 18, dt);
+            if (Math.abs(walkSpeed) > 0.1) {
+              phys.walkCycle += dt * 9;
+              walkerLeftLeg.rotation.x = Math.sin(phys.walkCycle) * 0.55;
+              walkerRightLeg.rotation.x = -Math.sin(phys.walkCycle) * 0.55;
+            } else {
+              walkerLeftLeg.rotation.x = 0;
+              walkerRightLeg.rotation.x = 0;
+            }
+            walkerGroup.position.set(phys.walkX, 0.04, phys.walkZ);
+            walkerGroup.rotation.set(0, phys.walkHeading, 0);
+            soundEngine.updateEngine(phys.engineRunning ? 820 : 0, 0, false, phys.engineRunning, 1, false, 0);
+          } else {
+            // Nitro Logic
+            if (
+              nitroPressed &&
+              phys.nitro > 5 &&
+              throttlePressed &&
+              Math.abs(phys.speedMs) > 10 &&
+              phys.shifterPos === 'D' &&
+              phys.engineRunning &&
+              phys.fuelPercent > 0
+            ) {
+              phys.nitroActive = true;
+              phys.nitro = Math.max(0, phys.nitro - dt * 28);
+            } else {
+              phys.nitroActive = false;
+              phys.nitro = Math.min(100, phys.nitro + dt * 9);
+            }
 
-          // Longitudinal acceleration for body dive/squat and camera
-          const rawAccelG = (phys.speedMs - phys.prevSpeedMs) / Math.max(0.008, dt) / 28;
-          phys.longitudinalAccelG = THREE.MathUtils.damp(
-            phys.longitudinalAccelG,
-            THREE.MathUtils.clamp(rawAccelG, -1.2, 1.2),
-            10,
-            dt
-          );
+            // Fuel consumption
+            if (phys.engineRunning && phys.fuelPercent > 0) {
+              const burnRate = throttlePressed ? 0.32 : 0.05;
+              phys.fuelPercent = Math.max(0, phys.fuelPercent - burnRate * dt);
+            }
 
-          // Smooth Anti-Stick Guardrail Collision & Glancing Deflection
-          const maxBarrierDist = halfRoad + 1.85;
-          if (absLat > maxBarrierDist) {
-            const sign = closest.signedLateralDist >= 0 ? 1 : -1;
-            const outwardX = closest.sample.normal.x * sign;
-            const outwardZ = closest.sample.normal.z * sign;
-            const inwardX = -outwardX;
-            const inwardZ = -outwardZ;
+            // Track surface classification & base friction
+            const closest = builtTrack.getClosestSample(phys.x, phys.z);
+            const halfRoad = builtTrack.roadWidth / 2;
+            const absLat = Math.abs(closest.signedLateralDist);
 
-            const fwdX = -Math.sin(phys.heading);
-            const fwdZ = -Math.cos(phys.heading);
+            let baseSurfaceGrip = 1.0;
+            if (absLat <= halfRoad - 0.2) {
+              phys.surfaceType = 'asphalt';
+              baseSurfaceGrip = currentWeather === 'rain' ? 0.88 : currentWeather === 'snow' ? 0.72 : 1.0;
+            } else if (absLat <= halfRoad + 0.85) {
+              phys.surfaceType = 'kerb';
+              baseSurfaceGrip = 0.84;
+            } else {
+              phys.surfaceType = 'shoulder';
+              baseSurfaceGrip = 0.58;
+            }
 
-            // Velocity component pointing outward towards the barrier
-            const velOutward = (fwdX * outwardX + fwdZ * outwardZ) * phys.speedMs;
+            let speedAbs = Math.abs(phys.speedMs);
+            let speedKmh = speedAbs * 3.6;
+            const isReversing = phys.speedMs < -0.1 || phys.shifterPos === 'R';
 
-            if (velOutward > 0) {
-              // Car is driving INTO the barrier:
-              // 1. Keep the car 25cm inside the barrier without clamping it permanently
-              phys.x = closest.sample.point.x + closest.sample.normal.x * sign * maxBarrierDist + inwardX * 0.25;
-              phys.z = closest.sample.point.z + closest.sample.normal.z * sign * maxBarrierDist + inwardZ * 0.25;
+            // 5. Appui aérodynamique & charge verticale
+            const downforceFactor = 1.0 + (30.0 / 1200.0) * THREE.MathUtils.clamp(speedKmh / 100.0, 0, 2.5);
+            phys.gripFactor = baseSurfaceGrip * downforceFactor;
 
-              // 2. Smoothly deflect heading towards track tangent so car glances forward instead of sticking nose-first
+            // 6. PHYSIQUE : vitesse avant + latérale, boîte P-R-N-D
+            phys.prevSpeedMs = phys.speedMs;
+            const baseMaxSpeed =
+              (stateRef.current.carSpec.maxSpeedKmh / 3.6) * (phys.nitroActive ? 1.18 : 1.0);
+            const maxSpeed =
+              phys.surfaceType === 'shoulder' ? Math.min(baseMaxSpeed, 28) : baseMaxSpeed;
+
+            const dynInput: CarDynInput = {
+              steerInput,
+              throttle: Boolean(throttlePressed),
+              brake: Boolean(brakePressed),
+              canDrive: canDrive && phys.parkingStatus !== 'cone_hit',
+              nitroActive: phys.nitroActive,
+              sensitivity: stateRef.current.settings.steeringSensitivity,
+              gripFactor: phys.gripFactor,
+              maxSpeedMs: maxSpeed,
+              acceleration: stateRef.current.carSpec.acceleration,
+              braking: stateRef.current.carSpec.braking,
+              handling: stateRef.current.carSpec.handling,
+              offRoad: phys.surfaceType === 'shoulder',
+              shifterPos: phys.shifterPos,
+              handbrake: phys.handbrakePulled,
+              engineRunning: phys.engineRunning,
+              outOfFuel: phys.fuelPercent <= 0,
+              parkingMode: stateRef.current.gameMode === 'parking',
+            };
+            stepCarDynamicsSubsteps(phys, dynInput, dt);
+
+            speedAbs = Math.abs(phys.speedMs);
+            speedKmh = speedAbs * 3.6;
+
+            // 8. Electronic Stability Program (ESP) — Anti-spin only during actual high-angle skids
+            const espActive = stateRef.current.settings.absEspEnabled !== false;
+            if (espActive && speedAbs > 15 && Math.abs(phys.slipAngleDeg) > 10 && stateRef.current.gameMode !== 'parking') {
               const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
               let headingDiff = trackHeading - phys.heading;
               while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
               while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
-              phys.heading += headingDiff * Math.min(1.0, dt * 4.0);
 
-              // 3. Glancing friction (only damp slightly, never kill speed to 0 so the car can keep moving!)
-              phys.speedMs = Math.max(0, phys.speedMs * Math.exp(-2.45 * dt)); // ≈ 0.96/image à 60 FPS, indépendant des FPS
-
-              if (speedAbs > 9) {
-                soundEngine.playCollision(Math.min(1.0, speedAbs / 30));
-                phys.cameraShake = Math.min(0.18, speedAbs * 0.005);
+              if (Math.abs(headingDiff) > 0.52) {
+                const antiSpinDamp = THREE.MathUtils.clamp((speedKmh / 280.0) * 1.6, 0.5, 1.8);
+                phys.heading += headingDiff * antiSpinDamp * dt;
               }
-            } else {
-              // Car is REVERSING or steering AWAY from the barrier:
-              // DO NOT block movement! Allow backing up freely towards the center of the road!
-              if (absLat > maxBarrierDist + 1.2) {
+            }
+
+            // Flat, rock-steady road height & pitch alignment
+            phys.y = 0.04;
+            phys.roadPitch = 0;
+            phys.longitudinalAccelG = 0;
+
+            // Smooth Anti-Stick Guardrail Collision & Glancing Deflection
+            const maxBarrierDist = stateRef.current.gameMode === 'parking' ? halfRoad + 14.0 : halfRoad + 1.85;
+            if (absLat > maxBarrierDist) {
+              const sign = closest.signedLateralDist >= 0 ? 1 : -1;
+              const outwardX = closest.sample.normal.x * sign;
+              const outwardZ = closest.sample.normal.z * sign;
+              const inwardX = -outwardX;
+              const inwardZ = -outwardZ;
+
+              const fwdX = -Math.sin(phys.heading);
+              const fwdZ = -Math.cos(phys.heading);
+              const velOutward = (fwdX * outwardX + fwdZ * outwardZ) * phys.speedMs;
+
+              if (velOutward > 0) {
+                phys.x = closest.sample.point.x + closest.sample.normal.x * sign * maxBarrierDist + inwardX * 0.25;
+                phys.z = closest.sample.point.z + closest.sample.normal.z * sign * maxBarrierDist + inwardZ * 0.25;
+
+                if (stateRef.current.gameMode !== 'parking') {
+                  const trackHeading = Math.atan2(-closest.sample.tangent.x, -closest.sample.tangent.z);
+                  let headingDiff = trackHeading - phys.heading;
+                  while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
+                  while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
+                  phys.heading += headingDiff * Math.min(1.0, dt * 4.0);
+                }
+
+                phys.speedMs *= Math.exp(-2.45 * dt);
+
+                if (speedAbs > 9) {
+                  soundEngine.playCollision(Math.min(1.0, speedAbs / 30));
+                  phys.cameraShake = Math.min(0.18, speedAbs * 0.005);
+                }
+              } else if (absLat > maxBarrierDist + 1.2) {
                 phys.x = closest.sample.point.x + closest.sample.normal.x * sign * (maxBarrierDist + 1.2);
                 phys.z = closest.sample.point.z + closest.sample.normal.z * sign * (maxBarrierDist + 1.2);
               }
             }
-          }
 
-          // Gear & RPM computation
-          const topSpeedMs = (stateRef.current.carSpec.maxSpeedKmh / 3.6);
-          if (isManual) {
-            if (tInput.shiftUpQueued) {
-              phys.manualGear = Math.min(6, phys.manualGear + 1);
-              tInput.shiftUpQueued = false;
-            }
-            if (tInput.shiftDownQueued) {
-              phys.manualGear = Math.max(1, phys.manualGear - 1);
-              tInput.shiftDownQueued = false;
-            }
-            phys.gear = phys.manualGear;
-          } else {
-            const speedFrac = Math.max(0, speedAbs) / topSpeedMs;
-            phys.gear = Math.min(6, Math.max(1, Math.floor(speedFrac * 6) + 1));
-          }
-          const gearMaxSpeed = (topSpeedMs / 6) * phys.gear;
-          const gearMinSpeed = (topSpeedMs / 6) * (phys.gear - 1);
-          const gearProgress = THREE.MathUtils.clamp(
-            (speedAbs - gearMinSpeed) / Math.max(1, gearMaxSpeed - gearMinSpeed),
-            0,
-            1
-          );
-          const targetRpm = throttlePressed
-            ? 1200 + gearProgress * 6200
-            : 850 + gearProgress * 2200;
-          phys.rpm = THREE.MathUtils.damp(phys.rpm, targetRpm, 10, dt);
+            // ===================================================================
+            // CAR PARKING MULTIPLAYER: PRECISION PARKING CHALLENGE EVALUATION
+            // ===================================================================
+            if (stateRef.current.gameMode === 'parking' && !phys.raceFinished) {
+              // 1. Cone Collision Check
+              for (const cone of activeCones) {
+                if (cone.hit) continue;
+                const cdx = phys.x - cone.x;
+                const cdz = phys.z - cone.z;
+                if (cdx * cdx + cdz * cdz < 1.32 * 1.32) {
+                  cone.hit = true;
+                  cone.group.rotation.x = 1.35;
+                  cone.group.position.y = 0.14;
+                  phys.speedMs = 0;
+                  phys.parkingStatus = 'cone_hit';
+                  soundEngine.playCollision(0.75);
+                  setBanner('CÔNE TOUCHÉ ! CLIQUEZ SUR RÉTABLIR POUR RÉESSAYER', 4.0);
+                }
+              }
 
-          // 1. DÉTECTION : Lap Progress & Checkpoint Validation with Anti-Doublon Cooldown
-          const isStraight = Boolean(stateRef.current.trackSpec.isStraight);
-          const prevT = phys.progressT;
-          const newT = closest.sample.t;
+              // 2. Bay Alignment & Distance Check
+              const bDx = phys.x - parkingBayTarget.x;
+              const bDz = phys.z - parkingBayTarget.z;
+              const bayDist = Math.hypot(bDx, bDz);
+              phys.parkingDistanceMeters = bayDist;
 
-          const crossedFinish = isStraight
-            ? newT >= 0.94 && prevT < 0.94 && phys.lapCooldown <= 0
-            : prevT > 0.75 && newT < 0.25 && phys.maxProgressReached > 0.40 && phys.lapCooldown <= 0;
+              let hDiff = parkingBayTarget.heading - phys.heading;
+              while (hDiff > Math.PI) hDiff -= Math.PI * 2;
+              while (hDiff < -Math.PI) hDiff += Math.PI * 2;
+              const absAngleErr = Math.abs(hDiff);
 
-          if (!isStraight && newT > 0.25 && newT < 0.85) {
-            phys.maxProgressReached = Math.max(phys.maxProgressReached, newT);
-          }
+              if (phys.parkingStatus !== 'cone_hit') {
+                const distScore = THREE.MathUtils.clamp(1 - bayDist / 8.0, 0, 1) * 65;
+                const angleScore = THREE.MathUtils.clamp(1 - absAngleErr / 0.8, 0, 1) * 35;
+                phys.parkingProgressPct = Math.round(distScore + angleScore);
 
-          if (crossedFinish) {
-            phys.maxProgressReached = 0;
-            phys.lapCooldown = 4.0; // Délai anti-doublon sur la ligne d'arrivée
-            if (phys.bestLapTime === null || phys.currentLapTime < phys.bestLapTime) {
-              phys.bestLapTime = phys.currentLapTime;
-            }
-
-            if (stateRef.current.gameMode === 'race' || stateRef.current.gameMode === 'time_attack') {
-              const nextLap = phys.lap + 1;
-              if (nextLap > phys.totalLaps) {
-                if (!phys.raceFinished) {
-                  phys.raceFinished = true;
-                  phys.lap = phys.totalLaps;
-                  phys.finalElapsedTime = phys.elapsedTime;
-                  phys.finishOrder = ++phys.finishCounter;
-                  phys.finishDelayTimer = 2.0; // 2 secondes d'affichage « ARRIVÉE ! » avec damier
-                  phys.finishCallbackFired = false;
-                  const lockedStandings = computeStandings();
-                  phys.finalStandings = lockedStandings;
-                  const playerEntry = lockedStandings.find((s) => s.isPlayer);
-                  phys.finalPosition = playerEntry ? playerEntry.rank : 1;
-                  soundEngine.playCheckpointChime();
-                  setBanner('ARRIVÉE ! SPRINT TERMINÉ !', 2.8);
+                if (bayDist < 1.75 && absAngleErr < 0.34) {
+                  phys.parkingStatus = 'aligned';
+                  bayFillMat.color.setHex(0x22c55e);
+                  bayFillMat.opacity = 0.55;
+                  if (speedAbs < 0.35 || phys.shifterPos === 'P') {
+                    phys.parkingHoldTimer += dt;
+                    phys.parkingProgressPct = 100;
+                    if (phys.parkingHoldTimer >= 0.55) {
+                      phys.parkingStatus = 'parked_success';
+                      phys.raceFinished = true;
+                      phys.finalElapsedTime = phys.elapsedTime;
+                      phys.finishDelayTimer = 1.6;
+                      phys.finishCallbackFired = false;
+                      soundEngine.playCheckpointChime();
+                      setBanner('STATIONNEMENT PARFAIT VALIDÉ !', 3.0);
+                    }
+                  } else {
+                    phys.parkingHoldTimer = 0;
+                    setBanner('BIEN ALIGNÉ ! FREINEZ OU PASSEZ EN [P] POUR VALIDER', 1.2);
+                  }
+                } else if (bayDist < 3.2) {
+                  phys.parkingStatus = 'inside';
+                  phys.parkingHoldTimer = 0;
+                  bayFillMat.color.setHex(0x38bdf8);
+                  bayFillMat.opacity = 0.42;
+                } else {
+                  phys.parkingStatus = 'approaching';
+                  phys.parkingHoldTimer = 0;
+                  bayFillMat.color.setHex(0xf59e0b);
+                  bayFillMat.opacity = 0.32;
                 }
               } else {
-                phys.lap = nextLap;
-                phys.currentLapTime = 0;
-                soundEngine.playCheckpointChime();
-                setBanner(`SECTION ${phys.lap} / ${phys.totalLaps}`, 2.5);
+                bayFillMat.color.setHex(0xef4444);
               }
+            }
+
+            // Gear & RPM computation
+            const topSpeedMs = stateRef.current.carSpec.maxSpeedKmh / 3.6;
+            if (phys.shifterPos === 'R') {
+              phys.gear = -1;
+            } else if (phys.shifterPos === 'N' || phys.shifterPos === 'P') {
+              phys.gear = 0;
+            } else if (isManual) {
+              if (tInput.shiftUpQueued) {
+                phys.manualGear = Math.min(6, phys.manualGear + 1);
+                tInput.shiftUpQueued = false;
+              }
+              if (tInput.shiftDownQueued) {
+                phys.manualGear = Math.max(1, phys.manualGear - 1);
+                tInput.shiftDownQueued = false;
+              }
+              phys.gear = phys.manualGear;
             } else {
-              phys.lap += 1;
-              phys.currentLapTime = 0;
-              soundEngine.playCheckpointChime();
-              setBanner(`SECTION FRANCHIE`, 2.2);
+              const speedFrac = Math.max(0, speedAbs) / topSpeedMs;
+              phys.gear = Math.min(6, Math.max(1, Math.floor(speedFrac * 6) + 1));
             }
-          }
-
-          // En mode ligne droite, si le joueur dépasse la fin de la piste, boucler vers l'avant
-          if (isStraight && phys.z <= -2520) {
-            phys.z += 2450;
-            phys.progressT = 0.02;
-          } else {
-            phys.progressT = newT;
-          }
-
-          // Exploration Mode Beacons Check
-          if (stateRef.current.gameMode === 'exploration') {
-            for (const b of builtTrack.beacons) {
-              if (!b.collected) {
-                const dx = phys.x - b.position.x;
-                const dz = phys.z - b.position.z;
-                if (dx * dx + dz * dz < 42) {
-                  b.collected = true;
-                  b.mesh.visible = false;
-                  soundEngine.playCheckpointChime();
-                  const collectedCount = builtTrack.beacons.filter((x) => x.collected).length;
-                  setBanner(`${b.label} découvert (${collectedCount}/${builtTrack.beacons.length})`, 3.0);
-                  if (collectedCount === builtTrack.beacons.length && !phys.raceFinished) {
-                    phys.raceFinished = true;
-                    phys.finalElapsedTime = phys.elapsedTime;
-                    phys.finishDelayTimer = 2.0;
-                    phys.finishCallbackFired = false;
-                  }
-                }
-              }
-            }
-          }
-
-          // 5. ADVERSAIRES : Update AI Opponents & Classify When Finishing Laps
-          const aiAggression = stateRef.current.trackSpec.aiAggression ?? 0.5;
-          for (let i = 0; i < aiCars.length; i++) {
-            const ai = aiCars[i];
-            if (ai.lapCooldown > 0) {
-              ai.lapCooldown = Math.max(0, ai.lapCooldown - dt);
-            }
-            const targetAiSpeed = ai.finished ? ai.baseMaxSpeedMs * 0.45 : ai.baseMaxSpeedMs;
-            ai.speedMs = THREE.MathUtils.damp(ai.speedMs, targetAiSpeed, 1.8 + aiAggression, dt);
-            const prevAiT = ai.t;
-            if (isStraight) {
-              ai.t = Math.min(1.0, ai.t + (ai.speedMs * dt) / builtTrack.totalLength);
-              if (ai.t >= 0.94 && prevAiT < 0.94 && ai.lapCooldown <= 0) {
-                ai.lapCooldown = 4.0;
-                if (!ai.finished) {
-                  ai.laps += 1;
-                  if (stateRef.current.gameMode === 'race' && ai.laps > phys.totalLaps) {
-                    ai.laps = phys.totalLaps;
-                    ai.finished = true;
-                    ai.finishTime = phys.elapsedTime;
-                    ai.finishOrder = ++phys.finishCounter;
-                  }
-                }
-              }
-              if (ai.t >= 0.98 && !ai.finished) {
-                ai.t = 0.02; // boucle en roue libre si la course continue
-              }
-            } else {
-              ai.t = (ai.t + (ai.speedMs * dt) / builtTrack.totalLength) % 1;
-              if (prevAiT > 0.75 && ai.t < 0.25 && ai.lapCooldown <= 0) {
-                ai.lapCooldown = ai.laps === 0 ? 2.5 : 5.0;
-                if (!ai.finished) {
-                  ai.laps += 1;
-                  if (stateRef.current.gameMode === 'race' && ai.laps > phys.totalLaps) {
-                    ai.laps = phys.totalLaps;
-                    ai.finished = true;
-                    ai.finishTime = phys.elapsedTime;
-                    ai.finishOrder = ++phys.finishCounter;
-                  }
-                }
-              }
-            }
-
-            // Stable racing line without random lane swerving or tilting
-            ai.laneOffset = THREE.MathUtils.damp(ai.laneOffset, ai.targetLaneOffset, 2.5, dt);
-            syncAICarPose(ai, dt);
-
-            for (const w of ai.rig.wheels) {
-              w.rotation.x -= ai.speedMs * dt * 2.5;
-            }
-            const aiSpeedKmh = Math.abs(ai.speedMs) * 3.6;
-            ai.rig.wheelBlurMaterial.opacity = THREE.MathUtils.clamp((aiSpeedKmh - 65) / 170, 0, 0.58);
-
-            const dx = phys.x - ai.worldX;
-            const dz = phys.z - ai.worldZ;
-            const distSq = dx * dx + dz * dz;
-            if (distSq < 11.5 && distSq > 0.001) {
-              const dist = Math.sqrt(distSq);
-              const overlap = (3.4 - dist) * 0.5;
-              const nx = dx / dist;
-              const nz = dz / dist;
-              phys.x += nx * overlap;
-              phys.z += nz * overlap;
-              phys.speedMs *= Math.exp(-5.0 * dt); // ≈ 0.92/image à 60 FPS, indépendant des FPS
-              soundEngine.playCollision(0.45);
-              phys.cameraShake = 0.18;
-            }
-          }
-
-          // Update Player Car Visual Rig
-          playerCar.root.position.set(phys.x, phys.y, phys.z);
-          playerCar.root.rotation.set(phys.roadPitch, phys.heading, 0, 'YXZ');
-
-          // Sync visual wheel meshes with authentic Ackermann angles (Unity CarSteering: SyncMesh)
-          playerCar.frontLeftPivot.rotation.y = -phys.frontLeftSteerDeg * (Math.PI / 180.0);
-          playerCar.frontRightPivot.rotation.y = -phys.frontRightSteerDeg * (Math.PI / 180.0);
-          playerCar.steeringWheel.rotation.z = -phys.steerAngleDeg * (Math.PI / 180.0) * 2.4;
-
-          for (const w of playerCar.wheels) {
-            w.rotation.x -= phys.speedMs * dt * 2.55;
-          }
-
-          // Anti-Roll bar balance & aerodynamic downforce stability (Unity CarSteering: antiRollForce = 6000f)
-          playerCar.bodyGroup.rotation.x = -phys.longitudinalAccelG * 0.016;
-          playerCar.bodyGroup.rotation.z = THREE.MathUtils.damp(
-            playerCar.bodyGroup.rotation.z,
-            -(phys.steerAngleDeg * (Math.PI / 180.0)) * (speedKmh / 160.0) * 0.035,
-            12,
-            dt
-          );
-          playerCar.bodyGroup.position.y = 0;
-
-          // Taillights, Brake Lights, Reverse Lights & Turn Signals
-          playerCar.brakeLightMaterial.emissiveIntensity = brakePressed && !isReversing ? 6.8 : phys.headlightsOn ? 1.8 : 0.8;
-          playerCar.brakeHaloMaterial.opacity = brakePressed && !isReversing ? 0.95 : phys.headlightsOn ? 0.42 : 0.18;
-          playerCar.reverseLightMaterial.emissiveIntensity = isReversing ? 4.2 : 0.15;
-          playerCar.turnSignalMaterial.emissiveIntensity =
-            Math.abs(phys.steerAngle) > 0.28 && Math.sin(elapsed * 9) > 0 ? 3.8 : 0.0;
-
-          for (let hIdx = 0; hIdx < playerCar.brakeHaloSprites.length; hIdx++) {
-            const isCenter = hIdx === 1;
-            const boost = brakePressed ? 1.38 : 1.0;
-            playerCar.brakeHaloSprites[hIdx].scale.set(
-              (isCenter ? 1.45 : 0.95) * boost,
-              (isCenter ? 0.52 : 0.68) * boost,
+            const activeGearAbs = Math.max(1, Math.abs(phys.gear));
+            const gearMaxSpeed = (topSpeedMs / 6) * activeGearAbs;
+            const gearMinSpeed = (topSpeedMs / 6) * (activeGearAbs - 1);
+            const gearProgress = THREE.MathUtils.clamp(
+              (speedAbs - gearMinSpeed) / Math.max(1, gearMaxSpeed - gearMinSpeed),
+              0,
               1
             );
-          }
+            const targetRpm = !phys.engineRunning
+              ? 0
+              : phys.shifterPos === 'N' || phys.shifterPos === 'P'
+              ? throttlePressed
+                ? 6200
+                : 850
+              : throttlePressed
+              ? 1200 + gearProgress * 6200
+              : 850 + gearProgress * 2200;
+            phys.rpm = THREE.MathUtils.damp(phys.rpm, targetRpm, 10, dt);
 
-          // Wheels high-speed blur & aerodynamic light trails
-          playerCar.wheelBlurMaterial.opacity = THREE.MathUtils.clamp((speedKmh - 65) / 170, 0, 0.62);
-          const trailRatio = THREE.MathUtils.clamp((speedKmh - 75) / 180, 0, 1);
-          playerCar.tailTrailMaterial.opacity = trailRatio * (brakePressed ? 0.52 : 0.32);
-          const trailScaleZ = 0.35 + trailRatio * 1.25;
-          for (const tr of playerCar.tailTrailMeshes) {
-            tr.scale.set(1, 1, trailScaleZ);
-          }
+            // 1. DÉTECTION : Lap Progress & Checkpoint Validation
+            const isStraight = Boolean(stateRef.current.trackSpec.isStraight);
+            const prevT = phys.progressT;
+            const newT = closest.sample.t;
 
-          // Tire Smoke, Drift Scrub & Off-Track Dust
-          if (
-            phys.drifting ||
-            (brakePressed && speedKmh > 38) ||
-            (phys.surfaceType === 'shoulder' && speedKmh > 15) ||
-            (currentWeather === 'rain' && speedKmh > 65)
-          ) {
-            const fX = -Math.sin(phys.heading);
-            const fZ = -Math.cos(phys.heading);
-            const rX = Math.cos(phys.heading);
-            const rZ = -Math.sin(phys.heading);
-            smokeParticles.spawn(
-              phys.x - fX * 2.1 + rX * 1.15,
-              phys.y + 0.22,
-              phys.z - fZ * 2.1 + rZ * 1.15,
-              (Math.random() - 0.5) * 2.0,
-              0.5 + Math.random() * 0.8,
-              (Math.random() - 0.5) * 2.0,
-              0.42
-            );
-            smokeParticles.spawn(
-              phys.x - fX * 2.1 - rX * 1.15,
-              phys.y + 0.22,
-              phys.z - fZ * 2.1 - rZ * 1.15,
-              (Math.random() - 0.5) * 2.0,
-              0.5 + Math.random() * 0.8,
-              (Math.random() - 0.5) * 2.0,
-              0.42
+            const crossedFinish =
+              stateRef.current.gameMode !== 'parking' &&
+              (isStraight
+                ? newT >= 0.94 && prevT < 0.94 && phys.lapCooldown <= 0
+                : prevT > 0.75 && newT < 0.25 && phys.maxProgressReached > 0.40 && phys.lapCooldown <= 0);
+
+            if (!isStraight && newT > 0.25 && newT < 0.85) {
+              phys.maxProgressReached = Math.max(phys.maxProgressReached, newT);
+            }
+
+            if (crossedFinish) {
+              phys.maxProgressReached = 0;
+              phys.lapCooldown = 4.0;
+              if (phys.bestLapTime === null || phys.currentLapTime < phys.bestLapTime) {
+                phys.bestLapTime = phys.currentLapTime;
+              }
+
+              if (stateRef.current.gameMode === 'race' || stateRef.current.gameMode === 'time_attack') {
+                const nextLap = phys.lap + 1;
+                if (nextLap > phys.totalLaps) {
+                  if (!phys.raceFinished) {
+                    phys.raceFinished = true;
+                    phys.lap = phys.totalLaps;
+                    phys.finalElapsedTime = phys.elapsedTime;
+                    phys.finishOrder = ++phys.finishCounter;
+                    phys.finishDelayTimer = 2.0;
+                    phys.finishCallbackFired = false;
+                    const lockedStandings = computeStandings();
+                    phys.finalStandings = lockedStandings;
+                    const playerEntry = lockedStandings.find((s) => s.isPlayer);
+                    phys.finalPosition = playerEntry ? playerEntry.rank : 1;
+                    soundEngine.playCheckpointChime();
+                    setBanner('ARRIVÉE ! SPRINT TERMINÉ !', 2.8);
+                  }
+                } else {
+                  phys.lap = nextLap;
+                  phys.currentLapTime = 0;
+                  soundEngine.playCheckpointChime();
+                  setBanner(`SECTION ${phys.lap} / ${phys.totalLaps}`, 2.5);
+                }
+              } else {
+                phys.lap += 1;
+                phys.currentLapTime = 0;
+                soundEngine.playCheckpointChime();
+                setBanner(`SECTION FRANCHIE`, 2.2);
+              }
+            }
+
+            if (isStraight && phys.z <= -2520) {
+              phys.z += 2450;
+              phys.progressT = 0.02;
+            } else {
+              phys.progressT = newT;
+            }
+
+            // Exploration Mode Beacons Check
+            if (stateRef.current.gameMode === 'exploration') {
+              for (const b of builtTrack.beacons) {
+                if (!b.collected) {
+                  const dx = phys.x - b.position.x;
+                  const dz = phys.z - b.position.z;
+                  if (dx * dx + dz * dz < 42) {
+                    b.collected = true;
+                    b.mesh.visible = false;
+                    soundEngine.playCheckpointChime();
+                    const collectedCount = builtTrack.beacons.filter((x) => x.collected).length;
+                    setBanner(`${b.label} découvert (${collectedCount}/${builtTrack.beacons.length})`, 3.0);
+                    if (collectedCount === builtTrack.beacons.length && !phys.raceFinished) {
+                      phys.raceFinished = true;
+                      phys.finalElapsedTime = phys.elapsedTime;
+                      phys.finishDelayTimer = 2.0;
+                      phys.finishCallbackFired = false;
+                    }
+                  }
+                }
+              }
+            }
+
+            // 5. ADVERSAIRES : Update AI Opponents
+            const aiAggression = stateRef.current.trackSpec.aiAggression ?? 0.5;
+            for (let i = 0; i < aiCars.length; i++) {
+              const ai = aiCars[i];
+              if (ai.lapCooldown > 0) {
+                ai.lapCooldown = Math.max(0, ai.lapCooldown - dt);
+              }
+              const targetAiSpeed = ai.finished ? ai.baseMaxSpeedMs * 0.45 : ai.baseMaxSpeedMs;
+              ai.speedMs = THREE.MathUtils.damp(ai.speedMs, targetAiSpeed, 1.8 + aiAggression, dt);
+              const prevAiT = ai.t;
+              if (isStraight) {
+                ai.t = Math.min(1.0, ai.t + (ai.speedMs * dt) / builtTrack.totalLength);
+                if (ai.t >= 0.94 && prevAiT < 0.94 && ai.lapCooldown <= 0) {
+                  ai.lapCooldown = 4.0;
+                  if (!ai.finished) {
+                    ai.laps += 1;
+                    if (stateRef.current.gameMode === 'race' && ai.laps > phys.totalLaps) {
+                      ai.laps = phys.totalLaps;
+                      ai.finished = true;
+                      ai.finishTime = phys.elapsedTime;
+                      ai.finishOrder = ++phys.finishCounter;
+                    }
+                  }
+                }
+                if (ai.t >= 0.98 && !ai.finished) {
+                  ai.t = 0.02;
+                }
+              } else {
+                ai.t = (ai.t + (ai.speedMs * dt) / builtTrack.totalLength) % 1;
+                if (prevAiT > 0.75 && ai.t < 0.25 && ai.lapCooldown <= 0) {
+                  ai.lapCooldown = ai.laps === 0 ? 2.5 : 5.0;
+                  if (!ai.finished) {
+                    ai.laps += 1;
+                    if (stateRef.current.gameMode === 'race' && ai.laps > phys.totalLaps) {
+                      ai.laps = phys.totalLaps;
+                      ai.finished = true;
+                      ai.finishTime = phys.elapsedTime;
+                      ai.finishOrder = ++phys.finishCounter;
+                    }
+                  }
+                }
+              }
+
+              ai.laneOffset = THREE.MathUtils.damp(ai.laneOffset, ai.targetLaneOffset, 2.5, dt);
+              syncAICarPose(ai, dt);
+
+              for (const w of ai.rig.wheels) {
+                w.rotation.x -= ai.speedMs * dt * 2.5;
+              }
+              const aiSpeedKmh = Math.abs(ai.speedMs) * 3.6;
+              ai.rig.wheelBlurMaterial.opacity = THREE.MathUtils.clamp((aiSpeedKmh - 65) / 170, 0, 0.58);
+
+              const dx = phys.x - ai.worldX;
+              const dz = phys.z - ai.worldZ;
+              const distSq = dx * dx + dz * dz;
+              if (distSq < 11.5 && distSq > 0.001) {
+                const dist = Math.sqrt(distSq);
+                const overlap = (3.4 - dist) * 0.5;
+                const nx = dx / dist;
+                const nz = dz / dist;
+                phys.x += nx * overlap;
+                phys.z += nz * overlap;
+                phys.speedMs *= Math.exp(-5.0 * dt);
+                soundEngine.playCollision(0.45);
+                phys.cameraShake = 0.18;
+              }
+            }
+
+            // Update Player Car Visual Rig (preserving custom suspension ride height)
+            const rideOffset = Number(playerCar.bodyGroup.userData.rideHeightOffset || 0);
+            playerCar.root.position.set(phys.x, phys.y, phys.z);
+            playerCar.root.rotation.set(0, phys.heading, 0, 'YXZ');
+
+            playerCar.frontLeftPivot.rotation.y = -phys.frontLeftSteerDeg * (Math.PI / 180.0);
+            playerCar.frontRightPivot.rotation.y = -phys.frontRightSteerDeg * (Math.PI / 180.0);
+            playerCar.steeringWheel.rotation.z = -phys.steerAngleDeg * (Math.PI / 180.0) * 2.4;
+
+            for (const w of playerCar.wheels) {
+              w.rotation.x -= phys.speedMs * dt * 2.55;
+            }
+
+            playerCar.bodyGroup.rotation.set(0, 0, 0);
+            playerCar.bodyGroup.position.set(0, rideOffset, 0);
+
+            // Taillights, Brake Lights, Reverse Lights & Authentic Turn Signals / Hazard Lights
+            const isBrakingVisual = brakePressed || phys.handbrakePulled || phys.shifterPos === 'P';
+            playerCar.brakeLightMaterial.emissiveIntensity = isBrakingVisual ? 6.8 : phys.headlightsOn ? 1.8 : 0.8;
+            playerCar.brakeHaloMaterial.opacity = isBrakingVisual ? 0.95 : phys.headlightsOn ? 0.42 : 0.18;
+            playerCar.reverseLightMaterial.emissiveIntensity = isReversing ? 4.5 : 0.15;
+
+            const signalActive =
+              phys.leftSignal || phys.rightSignal || phys.hazardLights || Math.abs(phys.steerAngle) > 0.36;
+            const blinkOn = Math.sin(elapsed * 9.5) > 0;
+            if ((phys.leftSignal || phys.rightSignal || phys.hazardLights) && blinkOn !== phys.lastSignalTickState) {
+              phys.lastSignalTickState = blinkOn;
+              soundEngine.playTurnSignalTick(blinkOn);
+            }
+            playerCar.turnSignalMaterial.emissiveIntensity = signalActive && blinkOn ? 4.2 : 0.0;
+
+            for (let hIdx = 0; hIdx < playerCar.brakeHaloSprites.length; hIdx++) {
+              const isCenter = hIdx === 1;
+              const boost = isBrakingVisual ? 1.38 : 1.0;
+              playerCar.brakeHaloSprites[hIdx].scale.set(
+                (isCenter ? 1.45 : 0.95) * boost,
+                (isCenter ? 0.52 : 0.68) * boost,
+                1
+              );
+            }
+
+            playerCar.wheelBlurMaterial.opacity = THREE.MathUtils.clamp((speedKmh - 65) / 170, 0, 0.62);
+            const trailRatio = THREE.MathUtils.clamp((speedKmh - 75) / 180, 0, 1);
+            playerCar.tailTrailMaterial.opacity = trailRatio * (isBrakingVisual ? 0.52 : 0.32);
+            const trailScaleZ = 0.35 + trailRatio * 1.25;
+            for (const tr of playerCar.tailTrailMeshes) {
+              tr.scale.set(1, 1, trailScaleZ);
+            }
+
+            // Custom Tire Smoke Color from Garage
+            const customSmokeHex = stateRef.current.customization.tireSmokeColor || '#f8fafc';
+            (smokeParticles.points.material as THREE.PointsMaterial).color.set(customSmokeHex);
+
+            if (
+              phys.drifting ||
+              (brakePressed && speedKmh > 38) ||
+              (phys.surfaceType === 'shoulder' && speedKmh > 15) ||
+              (currentWeather === 'rain' && speedKmh > 65)
+            ) {
+              const fX = -Math.sin(phys.heading);
+              const fZ = -Math.cos(phys.heading);
+              const rX = Math.cos(phys.heading);
+              const rZ = -Math.sin(phys.heading);
+              smokeParticles.spawn(
+                phys.x - fX * 2.1 + rX * 1.15,
+                phys.y + 0.22,
+                phys.z - fZ * 2.1 + rZ * 1.15,
+                (Math.random() - 0.5) * 2.0,
+                0.5 + Math.random() * 0.8,
+                (Math.random() - 0.5) * 2.0,
+                0.42
+              );
+              smokeParticles.spawn(
+                phys.x - fX * 2.1 - rX * 1.15,
+                phys.y + 0.22,
+                phys.z - fZ * 2.1 - rZ * 1.15,
+                (Math.random() - 0.5) * 2.0,
+                0.5 + Math.random() * 0.8,
+                (Math.random() - 0.5) * 2.0,
+                0.42
+              );
+            }
+
+            if ((brakePressed && speedKmh > 65) || (phys.surfaceType === 'kerb' && speedKmh > 105)) {
+              const fX = -Math.sin(phys.heading);
+              const fZ = -Math.cos(phys.heading);
+              const rX = Math.cos(phys.heading);
+              const rZ = -Math.sin(phys.heading);
+              const sideSign = Math.random() > 0.5 ? 1 : -1;
+              sparkParticles.spawn(
+                phys.x - fX * 1.85 + rX * 1.05 * sideSign,
+                phys.y + 0.14,
+                phys.z - fZ * 1.85 + rZ * 1.05 * sideSign,
+                -fX * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
+                1.2 + Math.random() * 2.4,
+                -fZ * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
+                0.24
+              );
+            }
+
+            if (phys.nitroActive) {
+              const fX = -Math.sin(phys.heading);
+              const fZ = -Math.cos(phys.heading);
+              const rX = Math.cos(phys.heading);
+              const rZ = -Math.sin(phys.heading);
+              nitroParticles.spawn(
+                phys.x - fX * 2.95 + rX * 0.55,
+                phys.y + 0.38,
+                phys.z - fZ * 2.95 + rZ * 0.55,
+                -fX * 6,
+                0.2,
+                -fZ * 6,
+                0.18
+              );
+              nitroParticles.spawn(
+                phys.x - fX * 2.95 - rX * 0.55,
+                phys.y + 0.38,
+                phys.z - fZ * 2.95 - rZ * 0.55,
+                -fX * 6,
+                0.2,
+                -fZ * 6,
+                0.18
+              );
+            }
+
+            // Synthesized engine audio
+            soundEngine.updateEngine(
+              phys.rpm,
+              speedKmh,
+              phys.drifting || (brakePressed && speedKmh > 30),
+              phys.engineRunning && phys.fuelPercent > 0,
+              Math.max(1, Math.abs(phys.gear)),
+              throttlePressed,
+              Math.abs(phys.steerAngle) / 0.46
             );
           }
-
-          // Friction sparks on hard braking / high-speed kerb
-          if ((brakePressed && speedKmh > 65) || (phys.surfaceType === 'kerb' && speedKmh > 105)) {
-            const fX = -Math.sin(phys.heading);
-            const fZ = -Math.cos(phys.heading);
-            const rX = Math.cos(phys.heading);
-            const rZ = -Math.sin(phys.heading);
-            const sideSign = Math.random() > 0.5 ? 1 : -1;
-            sparkParticles.spawn(
-              phys.x - fX * 1.85 + rX * 1.05 * sideSign,
-              phys.y + 0.14,
-              phys.z - fZ * 1.85 + rZ * 1.05 * sideSign,
-              -fX * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
-              1.2 + Math.random() * 2.4,
-              -fZ * (3 + Math.random() * 4) + (Math.random() - 0.5) * 3.2,
-              0.24
-            );
-          }
-
-          if (phys.nitroActive) {
-            const fX = -Math.sin(phys.heading);
-            const fZ = -Math.cos(phys.heading);
-            const rX = Math.cos(phys.heading);
-            const rZ = -Math.sin(phys.heading);
-            nitroParticles.spawn(
-              phys.x - fX * 2.95 + rX * 0.55,
-              phys.y + 0.38,
-              phys.z - fZ * 2.95 + rZ * 0.55,
-              -fX * 6,
-              0.2,
-              -fZ * 6,
-              0.18
-            );
-            nitroParticles.spawn(
-              phys.x - fX * 2.95 - rX * 0.55,
-              phys.y + 0.38,
-              phys.z - fZ * 2.95 - rZ * 0.55,
-              -fX * 6,
-              0.2,
-              -fZ * 6,
-              0.18
-            );
-          }
-
-          // Synthesized engine audio
-          soundEngine.updateEngine(
-            phys.rpm,
-            speedKmh,
-            phys.drifting || (brakePressed && speedKmh > 30),
-            true,
-            phys.gear,
-            throttlePressed,
-            Math.abs(phys.steerAngle) / 0.46
-          );
         } else {
+          // During 3-2-1 countdown: keep car 100% stationary, level, and wheels straight
+          const rideOffset = Number(playerCar.bodyGroup.userData.rideHeightOffset || 0);
+          phys.speedMs = 0;
+          phys.lateralVel = 0;
+          phys.yawRate = 0;
+          phys.steerAngle = 0;
+          phys.steerAngleDeg = 0;
+          phys.frontLeftSteerDeg = 0;
+          phys.frontRightSteerDeg = 0;
+          playerCar.root.position.set(phys.x, phys.y, phys.z);
+          playerCar.root.rotation.set(0, phys.heading, 0, 'YXZ');
+          playerCar.bodyGroup.rotation.set(0, 0, 0);
+          playerCar.bodyGroup.position.set(0, rideOffset, 0);
+          playerCar.frontLeftPivot.rotation.set(0, 0, 0);
+          playerCar.frontRightPivot.rotation.set(0, 0, 0);
+          playerCar.steeringWheel.rotation.set(0, 0, 0);
+
           const rev = keys.up || touchInputRef.current.throttle;
           phys.rpm = THREE.MathUtils.damp(phys.rpm, rev ? 5800 : 820, 6, dt);
           soundEngine.updateEngine(phys.rpm, 0, false, true, 1, rev, 0);
@@ -1679,7 +2397,19 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
         nitroParticles.update(dt);
         sparkParticles.update(dt);
 
-        keyLight.position.set(phys.x + 50, phys.y + 85, phys.z + 40);
+        // Orbit keyLight smoothly according to phys.dayTimeHours
+        const hNow = ((phys.dayTimeHours % 24) + 24) % 24;
+        const isNightNow = hNow < 5.8 || hNow > 19.6;
+        const orbitFrac = !isNightNow
+          ? (hNow - 5.8) / 13.8
+          : (hNow >= 19.6 ? hNow - 19.6 : hNow + 4.4) / 10.2;
+        const sunElev = Math.sin(orbitFrac * Math.PI) * 85 + 22;
+        const sunAzim = (orbitFrac - 0.5) * Math.PI * 0.9;
+        keyLight.position.set(
+          phys.x + Math.sin(sunAzim) * 75,
+          phys.y + sunElev,
+          phys.z - Math.cos(sunAzim) * 65
+        );
         keyLight.target.position.set(phys.x, phys.y, phys.z);
         keyLight.target.updateMatrixWorld();
 
@@ -1687,7 +2417,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
         carShowroomLight.target.position.set(phys.x, phys.y + 0.45, phys.z);
         carShowroomLight.target.updateMatrixWorld();
 
-        // 8. Camera Choreography with FOV Offset, Distance Offset & 180° Look-Back Support
+        // 8. Camera Choreography (Including Free-Walk Camera, Top-Down Parking Cam & 360° Orbit Cam)
         const camMode = stateRef.current.settings.cameraMode;
         const fovOffset = stateRef.current.settings.cameraFovOffset || 0;
         const distOffset = stateRef.current.settings.cameraDistanceOffset || 0;
@@ -1699,7 +2429,7 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
 
         const speedKmh = Math.abs(phys.speedMs) * 3.6;
         const baseFov =
-          (camMode === 'cockpit' ? 64 : camMode === 'hood' ? 58 : camMode === 'chase_near' ? 48 : 56) + fovOffset;
+          (camMode === 'cockpit' ? 64 : camMode === 'hood' ? 58 : camMode === 'chase_near' ? 48 : 54) + fovOffset;
         const speedFovBoost = (speedKmh / 350) * (camMode === 'chase_near' ? 8 : 12) + (phys.nitroActive ? 4.0 : 0);
         camera.fov = THREE.MathUtils.damp(camera.fov, THREE.MathUtils.clamp(baseFov + speedFovBoost, 40, 88), 5, dt);
         camera.updateProjectionMatrix();
@@ -1717,8 +2447,21 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           dt
         );
 
-        if (isLookingBack) {
-          // 180° Rear Look-Back View (Placed in front of car looking straight back behind the car)
+        const hideCockpitRoof = camMode === 'cockpit' && !phys.isWalking && !isLookingBack;
+        for (const m of playerCar.cockpitOccludingMeshes) {
+          m.visible = !hideCockpitRoof;
+        }
+
+        if (phys.isWalking) {
+          // 3rd-Person Free-Walk Camera following the Pedestrian around the Car
+          const wSin = Math.sin(phys.walkHeading);
+          const wCos = Math.cos(phys.walkHeading);
+          camera.position.x = THREE.MathUtils.damp(camera.position.x, phys.walkX + wSin * 3.8, 12, dt);
+          camera.position.y = THREE.MathUtils.damp(camera.position.y, 2.15, 12, dt);
+          camera.position.z = THREE.MathUtils.damp(camera.position.z, phys.walkZ + wCos * 3.8, 12, dt);
+          _camLookAt.set(phys.x, phys.y + 0.85, phys.z);
+          camera.lookAt(_camLookAt);
+        } else if (isLookingBack) {
           const distFront = 5.2 + distOffset * 0.5;
           camera.position.set(
             phys.x + _forwardVec.x * distFront,
@@ -1731,39 +2474,64 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
             phys.z - _forwardVec.z * 18
           );
           camera.lookAt(_camLookAt);
-        } else if (camMode === 'cockpit') {
+        } else if (camMode === 'top_parking') {
+          // Overhead Top-Down Parking Camera (Car Parking Multiplayer precision view)
           _camTargetPos.set(
-            phys.x - _rightVec.x * 0.42 + _forwardVec.x * 0.05 + shakeX * 0.35,
-            phys.y + 1.38 + shakeY * 0.35,
-            phys.z - _rightVec.z * 0.42 + _forwardVec.z * 0.05
+            phys.x + _forwardVec.x * 1.5,
+            phys.y + 14.5 + distOffset * 1.5,
+            phys.z + _forwardVec.z * 1.5 + 3.2
+          );
+          camera.position.x = THREE.MathUtils.damp(camera.position.x, _camTargetPos.x, 12, dt);
+          camera.position.y = THREE.MathUtils.damp(camera.position.y, _camTargetPos.y, 12, dt);
+          camera.position.z = THREE.MathUtils.damp(camera.position.z, _camTargetPos.z, 12, dt);
+          _camLookAt.set(phys.x + _forwardVec.x * 2.0, phys.y + 0.5, phys.z + _forwardVec.z * 2.0);
+          camera.lookAt(_camLookAt);
+        } else if (camMode === 'orbit_360') {
+          phys.showcaseAngle += dt * 0.45;
+          const orbR = 6.2 + distOffset;
+          camera.position.set(
+            phys.x + Math.sin(phys.heading + phys.showcaseAngle) * orbR,
+            phys.y + 2.2,
+            phys.z + Math.cos(phys.heading + phys.showcaseAngle) * orbR
+          );
+          _camLookAt.set(phys.x, phys.y + 0.85, phys.z);
+          camera.lookAt(_camLookAt);
+        } else if (camMode === 'cockpit') {
+          // Elevated Panoramic Driver-Seat In-Car POV (3D Steering Wheel at bottom + 100% Unobstructed Road Ahead)
+          const rideOffset = Number(playerCar.bodyGroup.userData.rideHeightOffset || 0) * 1.36;
+          _camTargetPos.set(
+            phys.x - _rightVec.x * 0.38 + _forwardVec.x * 0.14 + shakeX * 0.2,
+            phys.y + 1.56 + rideOffset + shakeY * 0.2,
+            phys.z - _rightVec.z * 0.38 + _forwardVec.z * 0.14
           );
           camera.position.copy(_camTargetPos);
+          const cockpitLookDist = 11.0;
           _camLookAt.set(
-            phys.x + _forwardVec.x * 26 + _rightVec.x * phys.cameraLookAheadYaw,
-            phys.y + 1.28 + _forwardVec.y * 26,
-            phys.z + _forwardVec.z * 26 + _rightVec.z * phys.cameraLookAheadYaw
+            phys.x - _rightVec.x * 0.15 + _forwardVec.x * cockpitLookDist + _rightVec.x * phys.cameraLookAheadYaw * 0.65,
+            phys.y + 0.38 + rideOffset + _forwardVec.y * cockpitLookDist,
+            phys.z - _rightVec.z * 0.15 + _forwardVec.z * cockpitLookDist + _rightVec.z * phys.cameraLookAheadYaw * 0.65
           );
           camera.lookAt(_camLookAt);
         } else if (camMode === 'hood') {
+          const rideOffset = Number(playerCar.bodyGroup.userData.rideHeightOffset || 0) * 1.36;
           _camTargetPos.set(
-            phys.x + _forwardVec.x * 0.65 + shakeX * 0.45,
-            phys.y + 1.54 + shakeY * 0.45,
-            phys.z + _forwardVec.z * 0.65
+            phys.x + _forwardVec.x * 0.95 + shakeX * 0.25,
+            phys.y + 1.48 + rideOffset + shakeY * 0.25,
+            phys.z + _forwardVec.z * 0.95
           );
           camera.position.copy(_camTargetPos);
           _camLookAt.set(
-            phys.x + _forwardVec.x * 28 + _rightVec.x * phys.cameraLookAheadYaw,
-            phys.y + 1.35 + _forwardVec.y * 28,
-            phys.z + _forwardVec.z * 28 + _rightVec.z * phys.cameraLookAheadYaw
+            phys.x + _forwardVec.x * 12.5 + _rightVec.x * phys.cameraLookAheadYaw * 0.65,
+            phys.y + 0.42 + rideOffset + _forwardVec.y * 12.5,
+            phys.z + _forwardVec.z * 12.5 + _rightVec.z * phys.cameraLookAheadYaw * 0.65
           );
           camera.lookAt(_camLookAt);
         } else {
           const isNear = camMode === 'chase_near';
-          const baseDistBack = (isNear ? 4.65 : 8.2) + distOffset;
-          const distBack = Math.max(3.2, baseDistBack + phys.longitudinalAccelG * 0.32);
-          const camHeight = (isNear ? 1.98 : 3.2) + distOffset * 0.18 - phys.longitudinalAccelG * 0.08;
+          const distBack = Math.max(3.2, (isNear ? 4.65 : 8.2) + distOffset);
+          const camHeight = (isNear ? 1.98 : 3.2) + distOffset * 0.18;
 
-          const cornerSwing = phys.steerAngle * 0.95 - phys.lateralVel * 0.1;
+          const cornerSwing = phys.steerAngle * 0.65;
 
           _camTargetPos.set(
             phys.x - _forwardVec.x * distBack + _rightVec.x * cornerSwing + shakeX,
@@ -1829,6 +2597,19 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           speedKmh: Math.round(Math.abs(phys.speedMs) * 3.6),
           rpm: Math.round(phys.rpm),
           gear: phys.gear,
+          shifterPos: phys.shifterPos,
+          handbrakePulled: phys.handbrakePulled,
+          leftSignal: phys.leftSignal,
+          rightSignal: phys.rightSignal,
+          hazardLights: phys.hazardLights,
+          engineRunning: phys.engineRunning,
+          fuelPercent: phys.fuelPercent,
+          nearGasStation: phys.nearGasStation,
+          isWalking: phys.isWalking,
+          parkingChallengeIndex: stateRef.current.parkingChallengeId,
+          parkingStatus: phys.parkingStatus,
+          parkingProgressPct: phys.parkingProgressPct,
+          parkingDistanceMeters: phys.parkingDistanceMeters,
           lap: phys.lap,
           totalLaps: phys.totalLaps,
           elapsedTime: phys.finalElapsedTime ?? phys.elapsedTime,
@@ -1850,7 +2631,8 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
           steerRatio: THREE.MathUtils.clamp(-phys.steerAngle / 0.46, -1, 1),
           surfaceType: phys.surfaceType,
           gripPercent: Math.round(phys.gripFactor * 100),
-          headlightsOn: phys.headlightsOn,
+          headlightsOn: effectiveHeadlightsOn,
+          dayTimeHours: phys.dayTimeHours,
           lookingBack: isLookingBack,
           discoveredPoints: discoveredCount,
           totalDiscoveryPoints: builtTrack.beacons.length,
@@ -1925,6 +2707,10 @@ export const RacingCanvas: React.FC<RacingCanvasProps> = ({
       unmounted = true;
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
+      window.removeEventListener('pointerdown', handleShowroomPointerDown);
+      window.removeEventListener('pointermove', handleShowroomPointerMove);
+      window.removeEventListener('pointerup', handleShowroomPointerUp);
+      window.removeEventListener('pointercancel', handleShowroomPointerUp);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);

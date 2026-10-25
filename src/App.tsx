@@ -10,6 +10,7 @@ import {
   GameSettings,
   getEffectiveCarSpec,
   MedalTier,
+  PARKING_CHALLENGES,
   PlayerProgress,
   ScreenState,
   TelemetryState,
@@ -28,6 +29,20 @@ const INITIAL_TELEMETRY: TelemetryState = {
   speedKmh: 0,
   rpm: 1000,
   gear: 1,
+  shifterPos: 'D',
+  handbrakePulled: false,
+  leftSignal: false,
+  rightSignal: false,
+  hazardLights: false,
+  engineRunning: true,
+  fuelPercent: 100,
+  nearGasStation: false,
+  refueling: false,
+  isWalking: false,
+  parkingChallengeIndex: 1,
+  parkingStatus: 'approaching',
+  parkingProgressPct: 0,
+  parkingDistanceMeters: 0,
   lap: 1,
   totalLaps: 3,
   elapsedTime: 0,
@@ -43,6 +58,7 @@ const INITIAL_TELEMETRY: TelemetryState = {
   surfaceType: 'asphalt',
   gripPercent: 100,
   headlightsOn: true,
+  dayTimeHours: 13.5,
   discoveredPoints: 0,
   totalDiscoveryPoints: 8,
   lastCheckpointBanner: null,
@@ -56,18 +72,29 @@ const INITIAL_TELEMETRY: TelemetryState = {
   discoveryBeacons: [],
 };
 
-const CAMERA_CYCLE: CameraMode[] = ['chase_near', 'chase_far', 'hood', 'cockpit'];
+const CAMERA_CYCLE: CameraMode[] = [
+  'chase_near',
+  'chase_far',
+  'top_parking',
+  'hood',
+  'cockpit',
+  'orbit_360',
+];
 const TIME_CYCLE: TimeOfDay[] = ['morning', 'afternoon', 'sunset', 'night'];
 const WEATHER_CYCLE: WeatherType[] = ['clear', 'rain', 'fog', 'snow'];
 
 const STORAGE_UPGRADES_KEY = 'apex_horizon_car_upgrades_v2';
+const STORAGE_CUSTOMIZATION_KEY = 'apex_horizon_car_customization_v1';
 const STORAGE_PROGRESS_KEY = 'apex_horizon_player_progress_v3';
 
 const DEFAULT_PROGRESS: PlayerProgress = {
   xp: 0,
+  money: 50000,
   driverLevel: 1,
   unlockedLevels: 1,
   stars: {},
+  parkingStars: {},
+  unlockedParkingLevel: 1,
   medals: {},
   bestLapTimes: {},
   bestTotalTimes: {},
@@ -87,9 +114,14 @@ function sanitizeProgress(raw: unknown): PlayerProgress {
     ...DEFAULT_PROGRESS,
     ...(raw as Partial<PlayerProgress>),
     xp: num(raw.xp, 0, 0),
+    money: Math.floor(num(raw.money, 50000, 0)),
     driverLevel: Math.floor(num(raw.driverLevel, 1, 1)),
     unlockedLevels: Math.floor(num(raw.unlockedLevels, 1, 1, TRACKS.length)),
+    unlockedParkingLevel: Math.floor(
+      num(raw.unlockedParkingLevel, 1, 1, PARKING_CHALLENGES.length)
+    ),
     stars: rec(raw.stars) as PlayerProgress['stars'],
+    parkingStars: rec(raw.parkingStars) as PlayerProgress['parkingStars'],
     medals: rec(raw.medals) as PlayerProgress['medals'],
     bestLapTimes: rec(raw.bestLapTimes) as PlayerProgress['bestLapTimes'],
     bestTotalTimes: rec(raw.bestTotalTimes) as PlayerProgress['bestTotalTimes'],
@@ -106,12 +138,33 @@ const MEDAL_RANK: Record<MedalTier, number> = {
 
 export default function App() {
   const [selectedCar, setSelectedCar] = useState<CarSpec>(CARS[0]);
-  const [customization, setCustomization] = useState<CarCustomization>({
-    bodyColor: CARS[0].defaultColor,
-    rimColor: CARS[0].defaultRimColor,
-    finish: 'metallic',
-    headlightColor: '#ffffff',
-    neonUnderglow: false,
+  const [customization, setCustomization] = useState<CarCustomization>(() => {
+    const fallback: CarCustomization = {
+      bodyColor: CARS[0].defaultColor,
+      rimColor: CARS[0].defaultRimColor,
+      rimStyle: 'amg_multi',
+      bodyKit: 'stock',
+      finish: 'metallic',
+      headlightColor: '#ffffff',
+      neonUnderglow: false,
+      rideHeight: 0,
+      camberAngleDeg: -1.5,
+      wheelOffset: 0.01,
+      windowTintOpacity: 0.55,
+      tireSmokeColor: '#ffffff',
+    };
+    try {
+      const raw = localStorage.getItem(STORAGE_CUSTOMIZATION_KEY);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (isRecord(parsed)) {
+          return { ...fallback, ...(parsed as Partial<CarCustomization>) };
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return fallback;
   });
 
   const [carUpgradesByCar, setCarUpgradesByCar] = useState<Record<string, CarPerformanceUpgrades>>(
@@ -158,8 +211,17 @@ export default function App() {
     }
   }, [carUpgradesByCar]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_CUSTOMIZATION_KEY, JSON.stringify(customization));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [customization]);
+
   const [selectedTrack, setSelectedTrack] = useState<TrackSpec>(TRACKS[0]);
   const [selectedMode, setSelectedMode] = useState<GameMode>('race');
+  const [parkingChallengeId, setParkingChallengeId] = useState<number>(1);
   const [screenState, setScreenState] = useState<ScreenState>('main_menu');
   const [hasActiveSession, setHasActiveSession] = useState<boolean>(false);
   const [raceSessionId, setRaceSessionId] = useState<number>(1);
@@ -168,6 +230,8 @@ export default function App() {
   const [settings, setSettings] = useState<GameSettings>({
     quality: 'auto',
     timeOfDay: TRACKS[0].defaultTimeOfDay,
+    dynamicDayNight: true,
+    dayNightSpeed: 1.0,
     weather: TRACKS[0].defaultWeather,
     soundEnabled: true,
     volume: 0.7,
@@ -198,6 +262,15 @@ export default function App() {
     lookBack: false,
     shiftUpQueued: false,
     shiftDownQueued: false,
+    shifterPos: 'D',
+    handbrake: false,
+    leftSignal: false,
+    rightSignal: false,
+    hazardLights: false,
+    toggleHeadlightsQueued: false,
+    toggleEngineQueued: false,
+    toggleWalkQueued: false,
+    refuelQueued: false,
   });
 
   useEffect(() => {
@@ -252,12 +325,22 @@ export default function App() {
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  const handleStartNewRace = useCallback((modeOverride?: GameMode) => {
+  const handleStartNewRace = useCallback((modeOverride?: GameMode, challengeIdOverride?: number) => {
     soundEngine.init();
+    const targetMode = modeOverride ?? selectedMode;
     if (modeOverride) {
       setSelectedMode(modeOverride);
     }
-    touchInputRef.current = {
+    if (challengeIdOverride !== undefined) {
+      setParkingChallengeId(challengeIdOverride);
+    }
+    if (targetMode === 'parking') {
+      setSettings((prev) => ({
+        ...prev,
+        cameraMode: 'cockpit',
+      }));
+    }
+    Object.assign(touchInputRef.current, {
       throttle: false,
       brake: false,
       left: false,
@@ -267,11 +350,20 @@ export default function App() {
       lookBack: false,
       shiftUpQueued: false,
       shiftDownQueued: false,
-    };
+      shifterPos: 'D',
+      handbrake: false,
+      leftSignal: false,
+      rightSignal: false,
+      hazardLights: false,
+      toggleHeadlightsQueued: false,
+      toggleEngineQueued: false,
+      toggleWalkQueued: false,
+      refuelQueued: false,
+    });
     setRaceSessionId((id) => id + 1);
     setHasActiveSession(true);
     setScreenState('playing');
-  }, []);
+  }, [selectedMode]);
 
   const handleResumeRace = useCallback(() => {
     soundEngine.init();
@@ -292,7 +384,10 @@ export default function App() {
       let earnedStars: 0 | 1 | 2 | 3 = 1;
       let earnedMedal: MedalTier = 'none';
 
-      if (selectedMode === 'race') {
+      if (selectedMode === 'parking') {
+        earnedStars = finalTelemetry.parkingStatus === 'cone_hit' ? 2 : 3;
+        earnedMedal = earnedStars === 3 ? 'gold' : 'silver';
+      } else if (selectedMode === 'race') {
         if (finalTelemetry.position === 1) {
           earnedStars = 3;
           earnedMedal = 'gold';
@@ -323,8 +418,33 @@ export default function App() {
 
       // 2. PROGRESSION : débloque le niveau suivant en terminant dans les 3 premiers (ou >= 2 étoiles). Sauvegarde dans localStorage.
       setPlayerProgress((prev) => {
+        if (selectedMode === 'parking') {
+          const activeChallenge =
+            PARKING_CHALLENGES.find((c) => c.id === parkingChallengeId) || PARKING_CHALLENGES[0];
+          const prevPStars = prev.parkingStars?.[activeChallenge.id] ?? 0;
+          const bestPStars = Math.max(prevPStars, earnedStars) as 0 | 1 | 2 | 3;
+          const currentUnlockedParking = prev.unlockedParkingLevel || 1;
+          const nextUnlockedParking =
+            activeChallenge.id >= currentUnlockedParking
+              ? Math.min(PARKING_CHALLENGES.length, activeChallenge.id + 1)
+              : currentUnlockedParking;
+          const nextXp = prev.xp + 220;
+          const nextLevel = Math.max(1, Math.floor(nextXp / 300) + 1);
+          return {
+            ...prev,
+            xp: nextXp,
+            money: (prev.money ?? 50000) + activeChallenge.rewardMoney,
+            driverLevel: nextLevel,
+            unlockedParkingLevel: nextUnlockedParking,
+            parkingStars: {
+              ...(prev.parkingStars || {}),
+              [activeChallenge.id]: bestPStars,
+            },
+          };
+        }
+
         const prevStars = prev.stars?.[selectedTrack.id] ?? 0;
-        const bestStars = (Math.max(prevStars, earnedStars) as 0 | 1 | 2 | 3);
+        const bestStars = Math.max(prevStars, earnedStars) as 0 | 1 | 2 | 3;
 
         const prevMedal = prev.medals?.[selectedTrack.id] ?? 'none';
         const bestMedal =
@@ -354,12 +474,16 @@ export default function App() {
 
         const xpGain =
           earnedStars === 3 ? 250 : earnedStars === 2 ? 160 : earnedStars === 1 ? 90 : 50;
+        const moneyGain =
+          earnedStars === 3 ? 5000 : earnedStars === 2 ? 3000 : 1500;
 
         const nextXp = prev.xp + xpGain;
         const nextLevel = Math.max(1, Math.floor(nextXp / 300) + 1);
 
         const nextProgress: PlayerProgress = {
+          ...prev,
           xp: nextXp,
+          money: (prev.money ?? 50000) + moneyGain,
           driverLevel: nextLevel,
           unlockedLevels: nextUnlockedLevels,
           stars: {
@@ -387,10 +511,16 @@ export default function App() {
         return nextProgress;
       });
     },
-    [selectedMode, selectedTrack]
+    [selectedMode, selectedTrack, parkingChallengeId]
   );
 
   const handleNextLevel = useCallback(() => {
+    if (selectedMode === 'parking') {
+      const nextPId = (parkingChallengeId % PARKING_CHALLENGES.length) + 1;
+      setParkingChallengeId(nextPId);
+      handleStartNewRace('parking', nextPId);
+      return;
+    }
     const idx = TRACKS.findIndex((t) => t.id === selectedTrack.id);
     if (idx >= 0 && idx + 1 < TRACKS.length) {
       const nextTrack = TRACKS[idx + 1];
@@ -403,7 +533,7 @@ export default function App() {
       }));
       handleStartNewRace('race');
     }
-  }, [selectedTrack.id, handleStartNewRace]);
+  }, [selectedMode, parkingChallengeId, selectedTrack.id, handleStartNewRace]);
 
   const handleCycleCamera = useCallback(() => {
     setSettings((prev) => {
@@ -458,6 +588,7 @@ export default function App() {
         customization={customization}
         trackSpec={selectedTrack}
         gameMode={selectedMode}
+        parkingChallengeId={parkingChallengeId}
         screenState={screenState}
         settings={settings}
         touchInputRef={touchInputRef}
@@ -474,9 +605,12 @@ export default function App() {
           telemetry={telemetry}
           gameMode={selectedMode}
           trackSpec={selectedTrack}
+          parkingChallengeId={parkingChallengeId}
+          playerMoney={playerProgress.money ?? 50000}
           soundEnabled={settings.soundEnabled}
           cameraMode={settings.cameraMode}
           timeOfDay={settings.timeOfDay}
+          dynamicDayNight={settings.dynamicDayNight}
           weather={settings.weather}
           rearViewMirror={settings.rearViewMirror}
           showTouchControls={showTouchControls}
@@ -484,8 +618,12 @@ export default function App() {
           onPauseClick={() => setScreenState('paused')}
           onToggleSound={() => handleUpdateSettings({ soundEnabled: !settings.soundEnabled })}
           onCycleCamera={handleCycleCamera}
+          onSelectCamera={(mode) => handleUpdateSettings({ cameraMode: mode })}
           onToggleTouchControls={handleToggleTouchControls}
           onCycleTimeOfDay={handleCycleTimeOfDay}
+          onToggleDynamicDayNight={() =>
+            handleUpdateSettings({ dynamicDayNight: !settings.dynamicDayNight })
+          }
           onCycleWeather={handleCycleWeather}
           onSelectLevel={(nextTrack) => {
             setSelectedTrack(nextTrack);
@@ -497,10 +635,14 @@ export default function App() {
             }));
             handleStartNewRace('race');
           }}
+          onSelectParkingChallenge={(id) => {
+            setParkingChallengeId(id);
+            handleStartNewRace('parking', id);
+          }}
         />
       )}
 
-      {/* Virtual Circular Steering Wheel, Sequential Paddles & Pedals */}
+      {/* Virtual Circular Steering Wheel, P-R-N-D Shifter, Handbrake & Pedals */}
       <TouchControls
         touchInputRef={touchInputRef}
         visible={showTouchControls}
@@ -509,9 +651,12 @@ export default function App() {
         steerRatio={telemetry.steerRatio}
         transmission={settings.transmission}
         gear={telemetry.gear}
+        shifterPos={telemetry.shifterPos}
+        handbrakePulled={telemetry.handbrakePulled}
+        isWalking={telemetry.isWalking}
       />
 
-      {/* Menus, 5-Level Track Selector, Garage Mechanical Upgrades & Advanced Settings */}
+      {/* Menus, 5-Level Track Selector, Parking Challenges, Garage Mechanical/Stance Upgrades & Advanced Settings */}
       <MainMenu
         screenState={screenState}
         hasActiveSession={hasActiveSession}
@@ -522,6 +667,7 @@ export default function App() {
         lastEarnedStars={lastEarnedStars}
         selectedTrack={selectedTrack}
         selectedMode={selectedMode}
+        parkingChallengeId={parkingChallengeId}
         settings={settings}
         telemetry={telemetry}
         onSelectScreen={setScreenState}
@@ -533,6 +679,7 @@ export default function App() {
         onUpdateUpgrades={handleUpdateUpgrades}
         onSelectTrack={setSelectedTrack}
         onSelectMode={setSelectedMode}
+        onSelectParkingChallenge={setParkingChallengeId}
         onUpdateSettings={handleUpdateSettings}
       />
     </main>

@@ -34,18 +34,33 @@ export const LEVELS: TrackSpec[] = [
     description:
       'Splendide corniche côtière à 4 voies bordée par la mer et illuminée d’arches néon cyan. Grandes courbes rapides, longues lignes droites et vue panoramique.',
     waypoints: [
+      // Longue ligne droite de départ/arrivée (parfaitement droite sur l'axe X = 0)
       [0, 0, 0],
-      [14, 0.2, -90],
-      [58, 0.6, -190],
-      [150, 1.2, -290],
-      [275, 1.6, -330],
-      [400, 1.4, -280],
-      [475, 0.9, -165],
-      [470, 0.4, -40],
-      [390, 0.1, 85],
-      [265, 0.4, 170],
-      [135, 0.8, 160],
-      [22, 0.3, 75],
+      [0, 0, -130],
+      [0, 0, -260],
+      // Grande courbe nord fluide
+      [45, 0, -370],
+      [150, 0, -430],
+      // Ligne droite transversale nord
+      [280, 0, -430],
+      [400, 0, -430],
+      // Grande courbe est
+      [495, 0, -370],
+      [540, 0, -260],
+      // Longue ligne droite retour parallèle
+      [540, 0, -120],
+      [540, 0, 20],
+      [540, 0, 150],
+      // Grande courbe sud de raccordement
+      [490, 0, 260],
+      [380, 0, 315],
+      // Ligne droite sud
+      [250, 0, 315],
+      [130, 0, 315],
+      // Courbe d'entrée + pré-grille droite avant la ligne de départ
+      [35, 0, 265],
+      [0, 0, 195],
+      [0, 0, 100],
     ],
   },
   {
@@ -69,30 +84,42 @@ export const LEVELS: TrackSpec[] = [
     targetGoldSec: 48,
     targetSilverSec: 56,
     targetBronzeSec: 68,
-    challengeText: 'Remonter le peloton à pleine vitesse dans les enchaînements en S',
+    challengeText: 'Remonter le peloton à pleine vitesse sur les longues lignes droites et grandes courbes',
     description:
-      'Route en béton clair doré en plein soleil avec double ligne centrale jaune, palmiers et éoliennes. Enchaînement de grandes courbes en S le long de la mer.',
+      'Route en béton clair doré en plein soleil avec double ligne centrale jaune, villas côtières et éoliennes. Alternance de longues lignes droites et de courbes fluides.',
     waypoints: [
+      // Longue ligne droite de départ
       [0, 0, 0],
-      [-35, 0.3, -95],
-      [-110, 0.8, -195],
-      [-75, 1.5, -305],
-      [-165, 2.0, -395],
-      [-305, 1.8, -345],
-      [-390, 1.2, -220],
-      [-370, 0.6, -80],
-      [-260, 0.2, 50],
-      [-295, 0.5, 185],
-      [-185, 1.1, 275],
-      [-55, 0.7, 215],
-      [15, 0.2, 85],
+      [0, 0, -140],
+      [0, 0, -280],
+      // Courbe nord-ouest régulière
+      [-50, 0, -395],
+      [-165, 0, -450],
+      // Ligne droite haute
+      [-300, 0, -450],
+      [-430, 0, -450],
+      // Courbe ouest
+      [-530, 0, -385],
+      [-575, 0, -265],
+      // Grande ligne droite ouest
+      [-575, 0, -110],
+      [-575, 0, 50],
+      // Courbe sud-ouest suivie d'une ligne droite sud
+      [-520, 0, 175],
+      [-400, 0, 260],
+      [-260, 0, 310],
+      [-130, 0, 310],
+      // Entrée et pré-grille parfaitement droite
+      [-35, 0, 260],
+      [0, 0, 195],
+      [0, 0, 100],
     ],
   },
   {
     id: 'level-3-canyon-flamboyant',
     levelNumber: 3,
     name: 'Canyon des Cimes (Route Ocre & Orange)',
-    subtitle: 'Chicanes Rapides de Canyon · 5 Adversaires · 3 Tours',
+    subtitle: 'Grandes Lignes Droites & Courbes de Canyon · 5 Adversaires · 3 Tours',
     location: 'Massif des Falaises Rouges · Coucher de Soleil Doré',
     lengthKm: 4.5,
     defaultLaps: 3,
@@ -111,20 +138,33 @@ export const LEVELS: TrackSpec[] = [
     targetBronzeSec: 72,
     challengeText: 'Franchir les gorges rocheuses à plus de 240 km/h et monter sur le podium',
     description:
-      'Route ocre flamboyante bordée de monolithes rouges au crépuscule. Dénivelé progressif avec virages relevés et grandes relances sous les falaises.',
+      'Route ocre flamboyante bordée de monolithes rouges et de résidences au crépuscule. Longues sections droites ultra-rapides reliées par de grands virages francs.',
     waypoints: [
+      // Ligne droite principale parfaitement rectiligne
       [0, 0, 0],
-      [48, 0.4, -85],
-      [-32, 1.0, -175],
-      [55, 1.7, -265],
-      [185, 2.4, -325],
-      [315, 2.2, -265],
-      [365, 1.6, -145],
-      [285, 1.1, -25],
-      [335, 0.7, 105],
-      [245, 0.4, 215],
-      [115, 0.2, 210],
-      [-10, 0.1, 115],
+      [0, 0, -140],
+      [0, 0, -280],
+      // Virage nord-est ample
+      [55, 0, -395],
+      [175, 0, -455],
+      // Ligne droite du canyon nord
+      [320, 0, -455],
+      [460, 0, -455],
+      // Virage est
+      [560, 0, -390],
+      [600, 0, -270],
+      // Ligne droite intermédiaire
+      [600, 0, -130],
+      [600, 0, 10],
+      // Grand virage panoramique sud
+      [540, 0, 140],
+      [420, 0, 240],
+      // Ligne droite sud de retour
+      [280, 0, 285],
+      [140, 0, 285],
+      [35, 0, 245],
+      [0, 0, 185],
+      [0, 0, 95],
     ],
   },
   {
@@ -148,22 +188,36 @@ export const LEVELS: TrackSpec[] = [
     targetGoldSec: 55,
     targetSilverSec: 64,
     targetBronzeSec: 76,
-    challengeText: 'Dompter les courbes mouillées du viaduc marin face à 6 pilotes affûtés',
+    challengeText: 'Dompter les lignes droites et courbes mouillées du viaduc marin face à 6 pilotes',
     description:
-      'Immense viaduc autoroutier incurvé traversant la mer avec haubans lumineux turquoise, asphalte humide réfléchissant et courbes rapides au-dessus de l’eau.',
+      'Immense viaduc autoroutier traversant la baie avec haubans lumineux turquoise, asphalte humide réfléchissant et longues travées droites au-dessus de l’eau.',
     waypoints: [
+      // Longue travée droite de départ
       [0, 0, 0],
-      [-55, 0.1, -85],
-      [-145, 0.3, -175],
-      [-265, 0.7, -235],
-      [-385, 1.2, -195],
-      [-435, 1.5, -75],
-      [-385, 1.2, 65],
-      [-275, 0.7, 175],
-      [-145, 0.3, 235],
-      [-15, 0.1, 215],
-      [65, 0.1, 135],
-      [25, 0.05, 55],
+      [0, 0, -145],
+      [0, 0, -290],
+      // Grande courbe sur la baie
+      [-55, 0, -405],
+      [-175, 0, -465],
+      // Travée droite nord
+      [-320, 0, -465],
+      [-460, 0, -465],
+      // Courbe ouest du viaduc
+      [-565, 0, -400],
+      [-610, 0, -275],
+      // Longue travée droite maritime ouest
+      [-610, 0, -120],
+      [-610, 0, 40],
+      [-610, 0, 180],
+      // Grande courbe sud
+      [-545, 0, 295],
+      [-420, 0, 355],
+      // Travée droite sud
+      [-270, 0, 355],
+      [-135, 0, 355],
+      [-35, 0, 285],
+      [0, 0, 205],
+      [0, 0, 105],
     ],
   },
   {
@@ -189,20 +243,35 @@ export const LEVELS: TrackSpec[] = [
     targetBronzeSec: 80,
     challengeText: 'Triompher des 7 pilotes d’élite sur le circuit de vitesse ultime',
     description:
-      'Circuit de vitesse pure bordé de damiers rouge et blanc, portiques LED stadium et grandes courbes paraboliques à négocier pied au plancher.',
+      'Circuit de vitesse pure bordé de damiers rouge et blanc, portiques LED stadium, longues lignes droites de dépassement et grandes courbes paraboliques.',
     waypoints: [
+      // Grande ligne droite des stands (parfaitement droite)
       [0, 0, 0],
-      [25, 0.1, -95],
-      [115, 0.3, -195],
-      [225, 0.6, -265],
-      [355, 0.8, -215],
-      [415, 0.7, -95],
-      [365, 0.5, 45],
-      [245, 0.3, 145],
-      [295, 0.2, 255],
-      [185, 0.1, 315],
-      [65, 0.05, 235],
-      [-25, 0.02, 125],
+      [0, 0, -150],
+      [0, 0, -300],
+      // Premier virage parabolique
+      [60, 0, -420],
+      [185, 0, -480],
+      // Ligne droite opposée nord
+      [340, 0, -480],
+      [490, 0, -480],
+      // Virage est
+      [600, 0, -415],
+      [645, 0, -285],
+      // Longue ligne droite retour est
+      [645, 0, -130],
+      [645, 0, 30],
+      [645, 0, 180],
+      // Grande parabolique sud
+      [585, 0, 305],
+      [455, 0, 370],
+      // Ligne droite sud
+      [300, 0, 370],
+      [150, 0, 370],
+      // Dernier virage et pré-grille droite vers la ligne des stands
+      [40, 0, 300],
+      [0, 0, 215],
+      [0, 0, 110],
     ],
   },
 ];

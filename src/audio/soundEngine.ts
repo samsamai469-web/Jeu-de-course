@@ -1,70 +1,55 @@
-// Procedural Web Audio API Synthesizer for Mercedes-AMG V8 BiTurbo
-// High-Fidelity Cross-Plane Cadence, Analog Saturation, Active Exhaust Valves, Twin-Turbo Flutter & Overrun Pops
+// Procedural Web Audio Engine Synthesizer for High-Performance Sports Car
+// Authentic V8 Combustion Firing Order, Exhaust Pipe Resonance & Dynamic Induction Roar
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private masterGain: GainNode | null = null;
 
-  // Harmonic Generation (Cross-plane V8 Crankshaft & Cylinders)
-  private engineSubOsc: OscillatorNode | null = null; // Deep sub-bass piston displacement rumble (20-110 Hz)
-  private engineOsc1: OscillatorNode | null = null;   // Sawtooth fundamental firing pulses
-  private engineOsc2: OscillatorNode | null = null;   // Square wave throaty exhaust growl
-  private engineOsc3: OscillatorNode | null = null;   // Upper harmonic sawtooth (high-RPM racing rasp)
-  private engineSubGain: GainNode | null = null;
+  // Engine Combustion Oscillators
+  private engineOsc1: OscillatorNode | null = null;      // Sawtooth fundamental (cylinder firing strokes)
+  private engineOsc2: OscillatorNode | null = null;      // Sawtooth 2nd harmonic (exhaust manifold pulses)
+  private engineSubOsc: OscillatorNode | null = null;    // Triangle sub-harmonic (crankshaft & piston displacement)
   private engineOsc1Gain: GainNode | null = null;
   private engineOsc2Gain: GainNode | null = null;
-  private engineOsc3Gain: GainNode | null = null;
+  private engineSubGain: GainNode | null = null;
 
-  // Cross-plane V8 Firing Order Amplitude Modulation (uneven burble at idle / low-mid RPM)
-  private firingPulseOsc: OscillatorNode | null = null;
-  private firingPulseGain: GainNode | null = null;
+  // Exhaust Acoustic Resonator (Formant filter creating the throaty metallic exhaust pipe chamber)
+  private exhaustResonance: BiquadFilterNode | null = null;
+  private exhaustBass: BiquadFilterNode | null = null;
+  private engineFilter: BiquadFilterNode | null = null;   // Dynamic lowpass opening with RPM & throttle
+  private engineGain: GainNode | null = null;
 
-  // Analog WaveShaper Saturation (manifold acoustic distortion & raw exhaust pipe growl)
-  private enginePreGain: GainNode | null = null;
-  private engineSaturation: WaveShaperNode | null = null;
-
-  // AMG Performance Exhaust Stage: Dual-Stage Acoustic Resonators & Active Sport Flaps
-  private exhaustBassBoost: BiquadFilterNode | null = null;  // Low-shelf 130 Hz (+7.5 dB)
-  private exhaustResonator: BiquadFilterNode | null = null;  // Peaking 440 Hz (+4.5 dB)
-  private exhaustSportFlap: BiquadFilterNode | null = null;  // Peaking 1100 Hz (+2 to +10 dB under throttle)
-  private engineFilter: BiquadFilterNode | null = null;      // Dynamic lowpass filter (680 Hz idle -> 6500 Hz redline)
-  private engineGain: GainNode | null = null;                // Master engine volume node
-
-  // Twin-Turbocharger Spool & Whistle
-  private engineTurboOsc: OscillatorNode | null = null;
-  private engineTurboGain: GainNode | null = null;
-
-  // Mechanical Valvetrain & Induction Roar
-  private engineNoiseNode: AudioBufferSourceNode | null = null;
-  private engineNoiseFilter: BiquadFilterNode | null = null;
-  private engineNoiseGain: GainNode | null = null;
+  // Intake Induction Roar (Broadband air rush under throttle load)
+  private intakeNoiseNode: AudioBufferSourceNode | null = null;
   private intakeFilter: BiquadFilterNode | null = null;
   private intakeGain: GainNode | null = null;
 
-  // Tire Screech & Lateral Drift Scrub
+  // Twin-Turbo Spool Whistle
+  private turboOsc: OscillatorNode | null = null;
+  private turboGain: GainNode | null = null;
+
+  // Tire Screech (Drift & heavy braking)
   private screechNode: AudioBufferSourceNode | null = null;
   private screechFilter: BiquadFilterNode | null = null;
   private screechGain: GainNode | null = null;
 
-  // Aerodynamic Wind Noise
+  // Aerodynamic Wind Rush
   private windNode: AudioBufferSourceNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private windGain: GainNode | null = null;
 
-  // Shared 2-second White Noise Buffer for backfires, blow-off valves, chassis rattles & collisions
+  // Shared noise buffer
   private sharedNoiseBuffer: AudioBuffer | null = null;
 
   private isInitialized = false;
   private isMuted = false;
-  private lastCollisionTime = -1; // anti-spam : un seul bruit d'impact toutes les ~180 ms
-  private volume = 0.88;
+  private lastCollisionTime = -1;
+  private volume = 0.85;
 
-  // State tracking for Gearbox shifts, Blow-Off Flutter & High-RPM Exhaust Overrun Pops
   private lastGear = 1;
   private wasThrottle = false;
   private lastPopTime = 0;
-  private lastFlutterTime = 0;
   private shiftDipUntil = 0;
 
   constructor() {
@@ -88,20 +73,6 @@ class SoundEngine {
     window.addEventListener('keydown', unlock, { passive: true });
   }
 
-  // Non-linear transfer curve creating authentic AMG exhaust manifold saturation and acoustic crunch
-  private makeAmgExhaustDistortionCurve(): Float32Array {
-    const n = 4096;
-    const curve = new Float32Array(n);
-    const drive = 2.4;
-    for (let i = 0; i < n; i++) {
-      const x = (i * 2) / n - 1;
-      const y = Math.tanh(x * drive);
-      // Subtle asymmetric harmonic warmth typical of large displacement exhaust manifolds
-      curve[i] = y * 0.84 + 0.16 * Math.sin(x * Math.PI * 0.95);
-    }
-    return curve;
-  }
-
   public init() {
     if (this.isInitialized) {
       if (this.ctx && this.ctx.state === 'suspended') {
@@ -116,13 +87,13 @@ class SoundEngine {
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioCtx();
 
-      // Master Dynamics Compressor + Master Gain (High perceived loudness, zero digital clipping)
+      // Master Dynamics Compressor: Punchy, clean, prevents clipping
       this.compressor = this.ctx.createDynamicsCompressor();
       this.compressor.threshold.value = -12;
-      this.compressor.knee.value = 8;
-      this.compressor.ratio.value = 4.5;
-      this.compressor.attack.value = 0.002;
-      this.compressor.release.value = 0.12;
+      this.compressor.knee.value = 6;
+      this.compressor.ratio.value = 4.0;
+      this.compressor.attack.value = 0.003;
+      this.compressor.release.value = 0.10;
 
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.value = this.isMuted ? 0 : this.volume;
@@ -130,7 +101,7 @@ class SoundEngine {
       this.compressor.connect(this.masterGain);
       this.masterGain.connect(this.ctx.destination);
 
-      // Shared 2-second White Noise Buffer for mechanical grain, wind, tire scrub & impacts
+      // Shared 2-second White Noise Buffer for mechanical noise, wind & backfires
       const bufferSize = this.ctx.sampleRate * 2;
       const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
       const output = noiseBuffer.getChannelData(0);
@@ -139,182 +110,139 @@ class SoundEngine {
       }
       this.sharedNoiseBuffer = noiseBuffer;
 
-      // 1. ENGINE SYNTHESIS: Multi-oscillator harmonic stack + Saturation + AMG Active Exhaust
-      this.enginePreGain = this.ctx.createGain();
-      this.enginePreGain.gain.value = 0.92;
+      // ------------------------------------------------------------------------
+      // 1. ENGINE SYNTHESIS: Authentic V8 Combustion Stack
+      // ------------------------------------------------------------------------
 
-      this.engineSaturation = this.ctx.createWaveShaper();
-      this.engineSaturation.curve = this.makeAmgExhaustDistortionCurve() as Float32Array<ArrayBuffer>;
-      this.engineSaturation.oversample = '2x';
+      // Sub-harmonic piston rumble (Triangle wave)
+      this.engineSubOsc = this.ctx.createOscillator();
+      this.engineSubOsc.type = 'triangle';
+      this.engineSubOsc.frequency.value = 28;
+      this.engineSubGain = this.ctx.createGain();
+      this.engineSubGain.gain.value = 0.52;
 
-      // Exhaust Stage Filters:
-      // a. Deep sub-bass low-shelf (+7.5 dB) for chest-thumping idle and acceleration rumble
-      this.exhaustBassBoost = this.ctx.createBiquadFilter();
-      this.exhaustBassBoost.type = 'lowshelf';
-      this.exhaustBassBoost.frequency.value = 135;
-      this.exhaustBassBoost.gain.value = 7.5;
+      // Fundamental firing stroke (Sawtooth wave)
+      this.engineOsc1 = this.ctx.createOscillator();
+      this.engineOsc1.type = 'sawtooth';
+      this.engineOsc1.frequency.value = 56;
+      this.engineOsc1Gain = this.ctx.createGain();
+      this.engineOsc1Gain.gain.value = 0.65;
 
-      // b. Exhaust pipe cavity resonance (+4.5 dB at 440 Hz)
-      this.exhaustResonator = this.ctx.createBiquadFilter();
-      this.exhaustResonator.type = 'peaking';
-      this.exhaustResonator.frequency.value = 440;
-      this.exhaustResonator.Q.value = 1.8;
-      this.exhaustResonator.gain.value = 4.5;
+      // 2nd Harmonic (Exhaust pulse pairing, Sawtooth wave with slight chorus detune)
+      this.engineOsc2 = this.ctx.createOscillator();
+      this.engineOsc2.type = 'sawtooth';
+      this.engineOsc2.frequency.value = 112;
+      this.engineOsc2.detune.value = -6;
+      this.engineOsc2Gain = this.ctx.createGain();
+      this.engineOsc2Gain.gain.value = 0.38;
 
-      // c. AMG Active Sport Exhaust Flaps (+2.0 dB at idle, surging to +10.5 dB under throttle at 1100 Hz)
-      this.exhaustSportFlap = this.ctx.createBiquadFilter();
-      this.exhaustSportFlap.type = 'peaking';
-      this.exhaustSportFlap.frequency.value = 1100;
-      this.exhaustSportFlap.Q.value = 2.4;
-      this.exhaustSportFlap.gain.value = 2.0;
+      // Exhaust pipe acoustic formant resonator (gives the throaty hollow metal timbre)
+      this.exhaustResonance = this.ctx.createBiquadFilter();
+      this.exhaustResonance.type = 'peaking';
+      this.exhaustResonance.frequency.value = 320;
+      this.exhaustResonance.Q.value = 2.2;
+      this.exhaustResonance.gain.value = 6.5;
 
-      // d. Dynamic lowpass engine filter (opens wide with throttle and RPM)
+      // Low-shelf bass boost for deep idle rumble
+      this.exhaustBass = this.ctx.createBiquadFilter();
+      this.exhaustBass.type = 'lowshelf';
+      this.exhaustBass.frequency.value = 120;
+      this.exhaustBass.gain.value = 5.0;
+
+      // Dynamic lowpass filter (opens with RPM & throttle for screaming redline roar)
       this.engineFilter = this.ctx.createBiquadFilter();
       this.engineFilter.type = 'lowpass';
-      this.engineFilter.frequency.value = 680;
-      this.engineFilter.Q.value = 2.2;
+      this.engineFilter.frequency.value = 620;
+      this.engineFilter.Q.value = 1.4;
 
       this.engineGain = this.ctx.createGain();
       this.engineGain.gain.value = 0.0;
 
-      // Cross-Plane V8 Firing Cadence Modulation (LFO)
-      this.firingPulseOsc = this.ctx.createOscillator();
-      this.firingPulseOsc.type = 'sine';
-      this.firingPulseOsc.frequency.value = 14.5; // ~Half-crank rotation at idle
-      this.firingPulseGain = this.ctx.createGain();
-      this.firingPulseGain.gain.value = 0.14; // Subtle 14% amplitude burble
-
-      this.firingPulseOsc.connect(this.firingPulseGain);
-      this.firingPulseGain.connect(this.engineGain.gain);
-
-      // Sub-Bass fundamental (deep mechanical V8 cross-plane piston stroke & block rumble)
-      this.engineSubOsc = this.ctx.createOscillator();
-      this.engineSubOsc.type = 'sine';
-      this.engineSubOsc.frequency.value = 29;
-      this.engineSubGain = this.ctx.createGain();
-      this.engineSubGain.gain.value = 0.95;
-
-      // Osc 1: Deep Sawtooth Fundamental (~850 RPM idle bass rumble to 7500 RPM)
-      this.engineOsc1 = this.ctx.createOscillator();
-      this.engineOsc1.type = 'sawtooth';
-      this.engineOsc1.frequency.value = 44;
-      this.engineOsc1.detune.value = -10;
-      this.engineOsc1Gain = this.ctx.createGain();
-      this.engineOsc1Gain.gain.value = 0.88;
-
-      // Osc 2: Square Wave (throaty sports exhaust pulse with AMG cross-plane growl)
-      this.engineOsc2 = this.ctx.createOscillator();
-      this.engineOsc2.type = 'square';
-      this.engineOsc2.frequency.value = 66;
-      this.engineOsc2.detune.value = 12;
-      this.engineOsc2Gain = this.ctx.createGain();
-      this.engineOsc2Gain.gain.value = 0.62;
-
-      // Osc 3: Upper Octave Sawtooth (metallic high-RPM racing scream)
-      this.engineOsc3 = this.ctx.createOscillator();
-      this.engineOsc3.type = 'sawtooth';
-      this.engineOsc3.frequency.value = 88;
-      this.engineOsc3.detune.value = -4;
-      this.engineOsc3Gain = this.ctx.createGain();
-      this.engineOsc3Gain.gain.value = 0.58;
-
-      // Twin-Turbocharger High-Frequency Spool & Whistle Oscillator
-      this.engineTurboOsc = this.ctx.createOscillator();
-      this.engineTurboOsc.type = 'sine';
-      this.engineTurboOsc.frequency.value = 1600;
-      this.engineTurboGain = this.ctx.createGain();
-      this.engineTurboGain.gain.value = 0.0;
-      this.engineTurboOsc.connect(this.engineTurboGain);
-      this.engineTurboGain.connect(this.compressor);
-      this.engineTurboOsc.start();
-
-      // Mechanical Grain Noise (valvetrain & intake texture)
-      this.engineNoiseNode = this.ctx.createBufferSource();
-      this.engineNoiseNode.buffer = noiseBuffer;
-      this.engineNoiseNode.loop = true;
-
-      this.engineNoiseFilter = this.ctx.createBiquadFilter();
-      this.engineNoiseFilter.type = 'bandpass';
-      this.engineNoiseFilter.frequency.value = 720;
-      this.engineNoiseFilter.Q.value = 2.0;
-
-      this.engineNoiseGain = this.ctx.createGain();
-      this.engineNoiseGain.gain.value = 0.24;
-
-      // Intake Resonator (opens up under throttle load)
-      this.intakeFilter = this.ctx.createBiquadFilter();
-      this.intakeFilter.type = 'bandpass';
-      this.intakeFilter.frequency.value = 520;
-      this.intakeFilter.Q.value = 2.5;
-      this.intakeGain = this.ctx.createGain();
-      this.intakeGain.gain.value = 0.0;
-
-      // Route oscillators to pre-gain
+      // Connect oscillators -> exhaust filters -> master engine gain -> compressor
       this.engineSubOsc.connect(this.engineSubGain);
       this.engineOsc1.connect(this.engineOsc1Gain);
       this.engineOsc2.connect(this.engineOsc2Gain);
-      this.engineOsc3.connect(this.engineOsc3Gain);
 
-      this.engineSubGain.connect(this.enginePreGain);
-      this.engineOsc1Gain.connect(this.enginePreGain);
-      this.engineOsc2Gain.connect(this.enginePreGain);
-      this.engineOsc3Gain.connect(this.enginePreGain);
+      this.engineSubGain.connect(this.exhaustBass);
+      this.engineOsc1Gain.connect(this.exhaustBass);
+      this.engineOsc2Gain.connect(this.exhaustBass);
 
-      // Noise & intake to pre-gain
-      this.engineNoiseNode.connect(this.engineNoiseFilter);
-      this.engineNoiseFilter.connect(this.engineNoiseGain);
-      this.engineNoiseGain.connect(this.enginePreGain);
-
-      this.engineNoiseFilter.connect(this.intakeFilter);
-      this.intakeFilter.connect(this.intakeGain);
-      this.intakeGain.connect(this.enginePreGain);
-
-      // Pipe through analog saturation WaveShaper -> exhaust resonators -> dynamic lowpass -> engineGain -> compressor
-      this.enginePreGain.connect(this.engineSaturation);
-      this.engineSaturation.connect(this.exhaustBassBoost);
-      this.exhaustBassBoost.connect(this.exhaustResonator);
-      this.exhaustResonator.connect(this.exhaustSportFlap);
-      this.exhaustSportFlap.connect(this.engineFilter);
+      this.exhaustBass.connect(this.exhaustResonance);
+      this.exhaustResonance.connect(this.engineFilter);
       this.engineFilter.connect(this.engineGain);
       this.engineGain.connect(this.compressor);
 
       this.engineSubOsc.start();
       this.engineOsc1.start();
       this.engineOsc2.start();
-      this.engineOsc3.start();
-      this.firingPulseOsc.start();
-      this.engineNoiseNode.start();
 
-      // 2. TIRE SCREECH (Bandpass-filtered noise for lateral slip & braking)
+      // ------------------------------------------------------------------------
+      // 2. INTAKE INDUCTION ROAR (Throaty combustion air rush under throttle)
+      // ------------------------------------------------------------------------
+      this.intakeNoiseNode = this.ctx.createBufferSource();
+      this.intakeNoiseNode.buffer = noiseBuffer;
+      this.intakeNoiseNode.loop = true;
+
+      this.intakeFilter = this.ctx.createBiquadFilter();
+      this.intakeFilter.type = 'bandpass';
+      this.intakeFilter.frequency.value = 650;
+      this.intakeFilter.Q.value = 2.0;
+
+      this.intakeGain = this.ctx.createGain();
+      this.intakeGain.gain.value = 0.0;
+
+      this.intakeNoiseNode.connect(this.intakeFilter);
+      this.intakeFilter.connect(this.intakeGain);
+      this.intakeGain.connect(this.compressor);
+      this.intakeNoiseNode.start();
+
+      // ------------------------------------------------------------------------
+      // 3. TURBOCHARGER SPOOL WHISTLE
+      // ------------------------------------------------------------------------
+      this.turboOsc = this.ctx.createOscillator();
+      this.turboOsc.type = 'sine';
+      this.turboOsc.frequency.value = 1800;
+      this.turboGain = this.ctx.createGain();
+      this.turboGain.gain.value = 0.0;
+
+      this.turboOsc.connect(this.turboGain);
+      this.turboGain.connect(this.compressor);
+      this.turboOsc.start();
+
+      // ------------------------------------------------------------------------
+      // 4. TIRE SCREECH (Drift & hard braking)
+      // ------------------------------------------------------------------------
       this.screechNode = this.ctx.createBufferSource();
       this.screechNode.buffer = noiseBuffer;
       this.screechNode.loop = true;
 
       this.screechFilter = this.ctx.createBiquadFilter();
       this.screechFilter.type = 'bandpass';
-      this.screechFilter.frequency.value = 1320;
-      this.screechFilter.Q.value = 4.8;
+      this.screechFilter.frequency.value = 1250;
+      this.screechFilter.Q.value = 4.2;
 
       this.screechGain = this.ctx.createGain();
-      this.screechGain.gain.value = 0;
+      this.screechGain.gain.value = 0.0;
 
       this.screechNode.connect(this.screechFilter);
       this.screechFilter.connect(this.screechGain);
       this.screechGain.connect(this.compressor);
       this.screechNode.start();
 
-      // 3. AERODYNAMIC WIND NOISE (Filtered white noise scaling with vehicle speed)
+      // ------------------------------------------------------------------------
+      // 5. AERODYNAMIC WIND NOISE
+      // ------------------------------------------------------------------------
       this.windNode = this.ctx.createBufferSource();
       this.windNode.buffer = noiseBuffer;
       this.windNode.loop = true;
 
       this.windFilter = this.ctx.createBiquadFilter();
       this.windFilter.type = 'lowpass';
-      this.windFilter.frequency.value = 240;
-      this.windFilter.Q.value = 0.95;
+      this.windFilter.frequency.value = 220;
+      this.windFilter.Q.value = 1.0;
 
       this.windGain = this.ctx.createGain();
-      this.windGain.gain.value = 0;
+      this.windGain.gain.value = 0.0;
 
       this.windNode.connect(this.windFilter);
       this.windFilter.connect(this.windGain);
@@ -341,188 +269,110 @@ class SoundEngine {
     }
   }
 
-  // Twin-Turbo Wastegate Blow-off / Compressor Flutter ("stututu") on throttle lift
-  public playBlowOffSurge(intensity = 0.7) {
-    if (!this.isInitialized || !this.ctx || !this.compressor || !this.sharedNoiseBuffer || this.isMuted) {
-      return;
-    }
-    try {
-      const now = this.ctx.currentTime;
-      if (now - this.lastFlutterTime < 0.35) return;
-      this.lastFlutterTime = now;
-
-      const boostClamped = Math.min(1.0, Math.max(0.2, intensity));
-      // 4 rapid flutter pulses
-      const pulses = 4;
-      for (let p = 0; p < pulses; p++) {
-        const t = now + p * 0.052;
-        const decay = Math.pow(0.68, p);
-
-        const flutterNoise = this.ctx.createBufferSource();
-        flutterNoise.buffer = this.sharedNoiseBuffer;
-
-        const flutterFilter = this.ctx.createBiquadFilter();
-        flutterFilter.type = 'bandpass';
-        flutterFilter.frequency.setValueAtTime(2600 - p * 180, t);
-        flutterFilter.Q.value = 3.6;
-
-        const flutterGain = this.ctx.createGain();
-        flutterGain.gain.setValueAtTime(0.001, t);
-        flutterGain.gain.linearRampToValueAtTime(0.38 * boostClamped * decay, t + 0.012);
-        flutterGain.gain.exponentialRampToValueAtTime(0.001, t + 0.048);
-
-        flutterNoise.connect(flutterFilter);
-        flutterFilter.connect(flutterGain);
-        flutterGain.connect(this.compressor);
-
-        flutterNoise.start(t, Math.random() * 1.0, 0.055);
-        flutterNoise.stop(t + 0.052);
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  // 4. GEARBOX: AMG SPEEDSHIFT DCT dual-clutch shift bang & ignition cut pop
+  // Dual-Clutch Gear Shift: Quick 0.08s ignition cut and transmission thud
   public playGearShift(isUpshift = true) {
     if (!this.isInitialized || !this.ctx || !this.compressor || !this.sharedNoiseBuffer || this.isMuted) {
       return;
     }
     try {
       const now = this.ctx.currentTime;
-      this.shiftDipUntil = now + 0.14;
+      this.shiftDipUntil = now + 0.09;
 
-      // Pneumatic turbo blow-off / wastegate surge & ignition cut sound
+      // Shift ignition cut pop
       const noiseSrc = this.ctx.createBufferSource();
       noiseSrc.buffer = this.sharedNoiseBuffer;
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'bandpass';
-      filter.Q.value = 3.5;
-      filter.frequency.setValueAtTime(isUpshift ? 3100 : 2200, now);
-      filter.frequency.exponentialRampToValueAtTime(540, now + 0.16);
+      filter.Q.value = 3.0;
+      filter.frequency.setValueAtTime(isUpshift ? 2200 : 1600, now);
+      filter.frequency.exponentialRampToValueAtTime(450, now + 0.12);
 
       const gain = this.ctx.createGain();
       gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(isUpshift ? 0.48 : 0.34, now + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      gain.gain.linearRampToValueAtTime(isUpshift ? 0.32 : 0.22, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
       noiseSrc.connect(filter);
       filter.connect(gain);
       gain.connect(this.compressor);
 
-      noiseSrc.start(now, Math.random() * 1.2, 0.18);
-      noiseSrc.stop(now + 0.19);
+      noiseSrc.start(now, Math.random() * 1.0, 0.14);
+      noiseSrc.stop(now + 0.15);
 
-      // Low-end AMG dual-clutch transmission engagement thud
+      // Low-end gearbox thud
       const thumpOsc = this.ctx.createOscillator();
       const thumpGain = this.ctx.createGain();
       thumpOsc.type = 'triangle';
-      thumpOsc.frequency.setValueAtTime(135, now);
-      thumpOsc.frequency.exponentialRampToValueAtTime(26, now + 0.11);
-      thumpGain.gain.setValueAtTime(0.42, now);
-      thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      thumpOsc.frequency.setValueAtTime(110, now);
+      thumpOsc.frequency.exponentialRampToValueAtTime(32, now + 0.09);
+      thumpGain.gain.setValueAtTime(0.28, now);
+      thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
 
       thumpOsc.connect(thumpGain);
       thumpGain.connect(this.compressor);
       thumpOsc.start(now);
-      thumpOsc.stop(now + 0.13);
-
-      // If upshifting under load: distinct metallic exhaust "BRAP" crack
-      if (isUpshift) {
-        const crackNoise = this.ctx.createBufferSource();
-        crackNoise.buffer = this.sharedNoiseBuffer;
-        const crackFilter = this.ctx.createBiquadFilter();
-        crackFilter.type = 'bandpass';
-        crackFilter.frequency.setValueAtTime(1450, now);
-        crackFilter.Q.value = 2.8;
-
-        const crackGain = this.ctx.createGain();
-        crackGain.gain.setValueAtTime(0.44, now + 0.02);
-        crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-
-        crackNoise.connect(crackFilter);
-        crackFilter.connect(crackGain);
-        crackGain.connect(this.compressor);
-        crackNoise.start(now + 0.02, Math.random() * 1.0, 0.08);
-        crackNoise.stop(now + 0.09);
-      }
+      thumpOsc.stop(now + 0.11);
     } catch {
       // Ignore
     }
   }
 
-  // 5. EXHAUST BACKFIRE: Visceral AMG Sport+ multi-stage crackles & pops (burble tune)
+  // Exhaust Overrun Backfires: Clean, crisp combustion pops on throttle lift-off
   public playExhaustPop() {
     if (!this.isInitialized || !this.ctx || !this.compressor || !this.sharedNoiseBuffer || this.isMuted) {
       return;
     }
     try {
       const now = this.ctx.currentTime;
-      if (now - this.lastPopTime < 0.14) return;
+      if (now - this.lastPopTime < 0.15) return;
       this.lastPopTime = now;
 
-      // 4 to 6 rapid staggered combustion explosions
-      const popCount = 4 + Math.floor(Math.random() * 3);
+      const popCount = 2 + Math.floor(Math.random() * 3);
       for (let i = 0; i < popCount; i++) {
-        const t = now + i * 0.052 + Math.random() * 0.026;
-        const strength = 1.0 - i * 0.14;
+        const t = now + i * 0.055 + Math.random() * 0.02;
+        const strength = 1.0 - i * 0.18;
 
-        // Sub-bass exhaust gas expansion shockwave (heavy chest thump)
+        // Sub-bass pressure pulse
         const subOsc = this.ctx.createOscillator();
         const subGain = this.ctx.createGain();
         subOsc.type = 'sine';
-        subOsc.frequency.setValueAtTime(115, t);
-        subOsc.frequency.exponentialRampToValueAtTime(28, t + 0.075);
+        subOsc.frequency.setValueAtTime(105, t);
+        subOsc.frequency.exponentialRampToValueAtTime(30, t + 0.06);
 
-        subGain.gain.setValueAtTime(0.65 * strength, t);
-        subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.085);
+        subGain.gain.setValueAtTime(0.45 * strength, t);
+        subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
 
         subOsc.connect(subGain);
         subGain.connect(this.compressor);
         subOsc.start(t);
-        subOsc.stop(t + 0.09);
+        subOsc.stop(t + 0.08);
 
-        // Mid-frequency metallic exhaust pipe resonance
-        const osc = this.ctx.createOscillator();
-        const oscGain = this.ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(250 - i * 30, t);
-        osc.frequency.exponentialRampToValueAtTime(42, t + 0.07);
-
-        oscGain.gain.setValueAtTime(0.52 * strength, t);
-        oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.075);
-
-        osc.connect(oscGain);
-        oscGain.connect(this.compressor);
-        osc.start(t);
-        osc.stop(t + 0.08);
-
-        // High-frequency rifle-like muzzle crackle
+        // Crisp exhaust crackle
         const burst = this.ctx.createBufferSource();
         burst.buffer = this.sharedNoiseBuffer;
 
         const burstFilter = this.ctx.createBiquadFilter();
         burstFilter.type = 'bandpass';
-        burstFilter.frequency.setValueAtTime(1650, t);
-        burstFilter.Q.value = 3.2;
+        burstFilter.frequency.setValueAtTime(1400, t);
+        burstFilter.Q.value = 2.5;
 
         const burstGain = this.ctx.createGain();
-        burstGain.gain.setValueAtTime(0.48 * strength, t);
-        burstGain.gain.exponentialRampToValueAtTime(0.001, t + 0.075);
+        burstGain.gain.setValueAtTime(0.35 * strength, t);
+        burstGain.gain.exponentialRampToValueAtTime(0.001, t + 0.065);
 
         burst.connect(burstFilter);
         burstFilter.connect(burstGain);
         burstGain.connect(this.compressor);
-        burst.start(t, Math.random() * 1.2, 0.085);
-        burst.stop(t + 0.09);
+        burst.start(t, Math.random() * 1.0, 0.07);
+        burst.stop(t + 0.08);
       }
     } catch {
       // Ignore
     }
   }
 
-  // 6. CHASSIS / SUSPENSION THUDS (curbs, bumps, landings)
+  // Chassis / Curb Thud
   public playSuspensionThud(intensity = 0.5) {
     if (!this.isInitialized || !this.ctx || !this.compressor || this.isMuted) return;
     try {
@@ -530,23 +380,23 @@ class SoundEngine {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(90, now);
-      osc.frequency.exponentialRampToValueAtTime(36, now + 0.12);
+      osc.frequency.setValueAtTime(80, now);
+      osc.frequency.exponentialRampToValueAtTime(32, now + 0.10);
 
-      const amp = Math.min(0.32, Math.max(0.04, intensity * 0.28));
+      const amp = Math.min(0.25, Math.max(0.04, intensity * 0.22));
       gain.gain.setValueAtTime(amp, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
       osc.connect(gain);
       gain.connect(this.compressor);
       osc.start(now);
-      osc.stop(now + 0.15);
+      osc.stop(now + 0.13);
     } catch {
       // Ignore
     }
   }
 
-  // 7. COLLISION SOUND (scaled by physical impact impulse)
+  // Collision Impact Thump
   public playCollision(intensity = 0.7) {
     if (!this.isInitialized || !this.ctx || !this.compressor || this.isMuted) return;
     try {
@@ -555,40 +405,37 @@ class SoundEngine {
       this.lastCollisionTime = now;
       const clampedIntensity = Math.min(1.0, Math.max(0.1, intensity));
 
-      // Low-frequency impact thump
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(140, now);
-      osc.frequency.exponentialRampToValueAtTime(24, now + 0.22);
+      osc.frequency.setValueAtTime(120, now);
+      osc.frequency.exponentialRampToValueAtTime(28, now + 0.18);
 
-      gain.gain.setValueAtTime(clampedIntensity * 0.52, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      gain.gain.setValueAtTime(clampedIntensity * 0.45, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.20);
 
       osc.connect(gain);
       gain.connect(this.compressor);
       osc.start(now);
-      osc.stop(now + 0.26);
+      osc.stop(now + 0.21);
 
-      // High-frequency sheet metal / guardrail scrape crunch
       if (this.sharedNoiseBuffer) {
         const crunch = this.ctx.createBufferSource();
         crunch.buffer = this.sharedNoiseBuffer;
-
         const crunchFilter = this.ctx.createBiquadFilter();
         crunchFilter.type = 'bandpass';
-        crunchFilter.frequency.setValueAtTime(1450, now);
-        crunchFilter.Q.value = 1.8;
+        crunchFilter.frequency.setValueAtTime(1200, now);
+        crunchFilter.Q.value = 2.0;
 
         const crunchGain = this.ctx.createGain();
-        crunchGain.gain.setValueAtTime(clampedIntensity * 0.44, now);
-        crunchGain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+        crunchGain.gain.setValueAtTime(clampedIntensity * 0.35, now);
+        crunchGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
 
         crunch.connect(crunchFilter);
         crunchFilter.connect(crunchGain);
         crunchGain.connect(this.compressor);
-        crunch.start(now, Math.random() * 1.0, 0.24);
-        crunch.stop(now + 0.25);
+        crunch.start(now, Math.random() * 1.0, 0.20);
+        crunch.stop(now + 0.21);
       }
     } catch {
       // Ignore
@@ -609,14 +456,11 @@ class SoundEngine {
       !this.ctx ||
       !this.engineOsc1 ||
       !this.engineOsc2 ||
-      !this.engineOsc3 ||
       !this.engineSubOsc ||
       !this.engineFilter ||
-      !this.exhaustSportFlap ||
+      !this.exhaustResonance ||
       !this.intakeFilter ||
       !this.intakeGain ||
-      !this.engineNoiseFilter ||
-      !this.engineNoiseGain ||
       !this.engineGain ||
       !this.screechFilter ||
       !this.screechGain ||
@@ -633,15 +477,14 @@ class SoundEngine {
     const now = this.ctx.currentTime;
     if (!isPlaying || this.isMuted) {
       this.engineGain.gain.setTargetAtTime(0, now, 0.08);
-      if (this.engineTurboGain) {
-        this.engineTurboGain.gain.setTargetAtTime(0, now, 0.08);
-      }
+      if (this.turboGain) this.turboGain.gain.setTargetAtTime(0, now, 0.08);
+      this.intakeGain.gain.setTargetAtTime(0, now, 0.08);
       this.screechGain.gain.setTargetAtTime(0, now, 0.05);
       this.windGain.gain.setTargetAtTime(0, now, 0.08);
       return;
     }
 
-    // Detect Gear Change -> AMG DCT Shift Pop & pneumatic thud
+    // Detect Gear Change
     if (gear !== this.lastGear) {
       if (gear > 0 && this.lastGear > 0 && speedKmh > 10) {
         this.playGearShift(gear > this.lastGear);
@@ -649,83 +492,72 @@ class SoundEngine {
       this.lastGear = gear;
     }
 
-    // Detect High-RPM Throttle Release -> Trigger Twin-Turbo Flutter ("stututu") & Exhaust Pops
-    if (this.wasThrottle && !throttlePressed && rpm > 3100 && speedKmh > 18) {
-      const normRpmForSurge = Math.max(0, Math.min(1, (rpm - 850) / (7500 - 850)));
-      this.playBlowOffSurge(normRpmForSurge);
-      if (rpm > 3500) {
-        this.playExhaustPop();
-      }
+    // High-RPM Throttle Release -> Overrun Backfire Pops
+    if (this.wasThrottle && !throttlePressed && rpm > 3400 && speedKmh > 20) {
+      this.playExhaustPop();
     }
     this.wasThrottle = throttlePressed;
 
     const isShifting = now < this.shiftDipUntil;
-    const effectiveRpm = isShifting ? rpm * 0.72 : rpm;
-    const normalizedRpm = Math.max(0, Math.min(1, (effectiveRpm - 850) / (7500 - 850)));
+    const effectiveRpm = isShifting ? rpm * 0.78 : rpm;
 
-    // Cross-Plane V8 Firing Frequency (~29 Hz at 850 RPM idle -> ~225 Hz at 7500 RPM)
-    const baseFreq = 29 + Math.pow(normalizedRpm, 1.15) * 196;
-    const freqTimeConstant = isShifting ? 0.012 : 0.022;
+    // Authentic V8 4-Stroke Cylinder Firing Frequency:
+    // 4 cylinder firing strokes per crankshaft revolution -> (RPM / 60) * 4
+    // Idle 850 RPM  -> 56.7 Hz
+    // 3000 RPM      -> 200 Hz
+    // 6000 RPM      -> 400 Hz
+    // 7500 RPM      -> 500 Hz
+    const clampedRpm = Math.max(750, Math.min(8000, effectiveRpm));
+    const firingFreq = (clampedRpm / 60) * 4;
+    const timeConstant = isShifting ? 0.015 : 0.025;
 
-    this.engineSubOsc.frequency.setTargetAtTime(baseFreq * 0.5, now, freqTimeConstant);
-    this.engineOsc1.frequency.setTargetAtTime(baseFreq, now, freqTimeConstant);
-    this.engineOsc2.frequency.setTargetAtTime(baseFreq * 1.5, now, freqTimeConstant);
-    this.engineOsc3.frequency.setTargetAtTime(baseFreq * 2.0, now, freqTimeConstant);
+    // Fundamental + Harmonics
+    this.engineSubOsc.frequency.setTargetAtTime(firingFreq * 0.5, now, timeConstant);
+    this.engineOsc1.frequency.setTargetAtTime(firingFreq, now, timeConstant);
+    this.engineOsc2.frequency.setTargetAtTime(firingFreq * 2.0, now, timeConstant);
 
-    // Cross-plane firing LFO modulation frequency: tracks crankshaft speed (~14.5 Hz at idle)
-    if (this.firingPulseOsc && this.firingPulseGain) {
-      const crankFreq = Math.max(12, baseFreq * 0.5);
-      this.firingPulseOsc.frequency.setTargetAtTime(crankFreq, now, 0.03);
-      // More noticeable thumping burble at idle / low RPM, smoothing out into solid roar at high RPM
-      const amDepth = 0.16 * (1.0 - normalizedRpm * 0.65);
-      this.firingPulseGain.gain.setTargetAtTime(amDepth, now, 0.03);
-    }
+    // Exhaust Pipe Resonant Formant Frequency tracks engine pitch
+    const exhaustPitch = 240 + (clampedRpm / 7500) * 850;
+    this.exhaustResonance.frequency.setTargetAtTime(exhaustPitch, now, 0.03);
 
-    // Twin-Turbo spool whistle tracks RPM & throttle boost pressure
-    if (this.engineTurboOsc && this.engineTurboGain) {
-      const turboFrequency = 1500 + Math.pow(normalizedRpm, 1.25) * 2600;
-      this.engineTurboOsc.frequency.setTargetAtTime(turboFrequency, now, 0.05);
-      const turboVolume = throttlePressed && normalizedRpm > 0.15 ? 0.08 + normalizedRpm * 0.18 : 0.008;
-      this.engineTurboGain.gain.setTargetAtTime(isShifting ? 0.005 : turboVolume, now, 0.035);
-    }
+    // Dynamic Lowpass Filter: Opens up with throttle for powerful acceleration bark
+    const rpmFrac = (clampedRpm - 750) / (7500 - 750);
+    const filterCutoff = throttlePressed
+      ? 1200 + rpmFrac * 3600
+      : 550 + rpmFrac * 1600;
+    this.engineFilter.frequency.setTargetAtTime(Math.max(450, filterCutoff), now, 0.03);
 
-    // AMG Active Sport Exhaust Flaps: Opens wide under throttle (+2 dB idle -> +10.5 dB wide-open throttle)
-    const targetFlapGain = throttlePressed ? 3.5 + normalizedRpm * 7.0 : 1.8 + normalizedRpm * 2.2;
-    this.exhaustSportFlap.gain.setTargetAtTime(targetFlapGain, now, 0.025);
+    // Engine Volume: Deep distinct idle, powerful roaring pull under load
+    const baseGain = 0.48 + rpmFrac * 0.28 + (throttlePressed ? 0.16 : 0);
+    const targetGain = isShifting ? baseGain * 0.5 : baseGain;
+    this.engineGain.gain.setTargetAtTime(targetGain, now, isShifting ? 0.01 : 0.03);
 
-    // Lowpass filter opens wide with RPM & throttle load for crisp, tearing V8 roar
-    const targetFilterCutoff =
-      680 + Math.pow(normalizedRpm, 1.1) * 4400 + (throttlePressed ? 1400 : 0) - (isShifting ? 800 : 0);
-    this.engineFilter.frequency.setTargetAtTime(Math.max(480, targetFilterCutoff), now, 0.022);
-
-    // Intake throatiness opens up under throttle
-    const intakeRoar = throttlePressed ? 0.35 + normalizedRpm * 0.42 : 0.08;
+    // Throttle Air Induction Roar (visceral "VROOOOM" air suction)
+    const intakeRoar = throttlePressed ? 0.08 + rpmFrac * 0.22 : 0.015;
     this.intakeGain.gain.setTargetAtTime(intakeRoar, now, 0.025);
-    this.intakeFilter.frequency.setTargetAtTime(500 + normalizedRpm * 1450, now, 0.025);
+    this.intakeFilter.frequency.setTargetAtTime(450 + rpmFrac * 950, now, 0.03);
 
-    // Mechanical grain noise tracks RPM
-    this.engineNoiseFilter.frequency.setTargetAtTime(450 + normalizedRpm * 2100, now, 0.035);
-    this.engineNoiseGain.gain.setTargetAtTime(0.16 + normalizedRpm * 0.24, now, 0.035);
+    // Turbo Spool Whistle (Subtle, pleasant high whistle)
+    if (this.turboOsc && this.turboGain) {
+      const turboPitch = 1800 + rpmFrac * 2200;
+      this.turboOsc.frequency.setTargetAtTime(turboPitch, now, 0.05);
+      const turboVol = throttlePressed && rpmFrac > 0.2 ? 0.004 + rpmFrac * 0.012 : 0.001;
+      this.turboGain.gain.setTargetAtTime(turboVol, now, 0.04);
+    }
 
-    // Engine Master Volume: Authoritative, deep, visceral AMG sports exhaust presence
-    // Noticeable at idle (0.54) and loud, punchy under throttle (up to 0.96)
-    const baseEngineGain = 0.54 + normalizedRpm * 0.28 + (throttlePressed ? 0.18 : 0);
-    const targetEngineGain = isShifting ? baseEngineGain * 0.40 : baseEngineGain;
-    this.engineGain.gain.setTargetAtTime(targetEngineGain, now, isShifting ? 0.01 : 0.03);
-
-    // Tire squeal in corners and hard braking
+    // Tire Screech on drift / hard braking
     const corneringSlip = turnIntensity > 0.45 && speedKmh > 35 ? (turnIntensity - 0.45) * 2.0 : 0;
     const slipFactor = isBrakingOrDrifting ? 1.0 : Math.min(1.0, corneringSlip);
-    const speedRatio = Math.max(0, Math.min(1, (speedKmh - 20) / 220));
-    const screechVolume = slipFactor > 0.05 && speedKmh > 20 ? slipFactor * speedRatio * 0.28 : 0;
+    const speedRatio = Math.max(0, Math.min(1, (speedKmh - 20) / 200));
+    const screechVolume = slipFactor > 0.05 && speedKmh > 20 ? slipFactor * speedRatio * 0.24 : 0;
 
-    this.screechFilter.frequency.setTargetAtTime(1180 + speedRatio * 450, now, 0.04);
+    this.screechFilter.frequency.setTargetAtTime(1150 + speedRatio * 400, now, 0.04);
     this.screechGain.gain.setTargetAtTime(screechVolume, now, 0.035);
 
-    // Aerodynamic wind rush (scales with speed^1.8)
+    // Aerodynamic Wind Noise
     const windSpeedNorm = Math.max(0, Math.min(1, speedKmh / 320));
-    const windVol = Math.pow(windSpeedNorm, 1.8) * 0.26;
-    const windCutoff = 200 + windSpeedNorm * 1250;
+    const windVol = Math.pow(windSpeedNorm, 1.8) * 0.22;
+    const windCutoff = 180 + windSpeedNorm * 1100;
     this.windFilter.frequency.setTargetAtTime(windCutoff, now, 0.05);
     this.windGain.gain.setTargetAtTime(windVol, now, 0.05);
   }
@@ -738,13 +570,13 @@ class SoundEngine {
       const gain = this.ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(isGo ? 880 : 440, now);
-      gain.gain.setValueAtTime(0.22, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + (isGo ? 0.38 : 0.18));
+      gain.gain.setValueAtTime(0.20, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + (isGo ? 0.35 : 0.16));
 
       osc.connect(gain);
       gain.connect(this.compressor);
       osc.start(now);
-      osc.stop(now + (isGo ? 0.4 : 0.2));
+      osc.stop(now + (isGo ? 0.36 : 0.18));
     } catch {
       // Ignore
     }
@@ -760,12 +592,91 @@ class SoundEngine {
       osc.frequency.setValueAtTime(587.33, now);
       osc.frequency.setValueAtTime(880, now + 0.08);
       gain.gain.setValueAtTime(0.18, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
 
       osc.connect(gain);
       gain.connect(this.compressor);
       osc.start(now);
-      osc.stop(now + 0.3);
+      osc.stop(now + 0.28);
+    } catch {
+      // Ignore
+    }
+  }
+
+  // Dual-tone automotive horn (415 Hz + 510 Hz)
+  public playHorn(duration = 0.28) {
+    if (!this.isInitialized || !this.ctx || !this.compressor || this.isMuted) return;
+    try {
+      const now = this.ctx.currentTime;
+      for (const freq of [415, 512]) {
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, now);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1650, now);
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.16, now + 0.015);
+        gain.gain.setValueAtTime(0.16, now + Math.max(0.04, duration - 0.04));
+        gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.compressor);
+        osc.start(now);
+        osc.stop(now + duration + 0.02);
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  // Crisp mechanical relay "tic-tac" for turn signals & hazard lights
+  public playTurnSignalTick(isTick = true) {
+    if (!this.isInitialized || !this.ctx || !this.compressor || this.isMuted) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(isTick ? 1350 : 980, now);
+      osc.frequency.exponentialRampToValueAtTime(isTick ? 420 : 310, now + 0.018);
+
+      gain.gain.setValueAtTime(0.09, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.022);
+
+      osc.connect(gain);
+      gain.connect(this.compressor);
+      osc.start(now);
+      osc.stop(now + 0.025);
+    } catch {
+      // Ignore
+    }
+  }
+
+  // Starter crank & ignition flare when starting the engine
+  public playEngineStarter() {
+    if (!this.isInitialized || !this.ctx || !this.compressor || this.isMuted) return;
+    try {
+      const now = this.ctx.currentTime;
+      for (let i = 0; i < 3; i++) {
+        const t = now + i * 0.095;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(92 + i * 12, t);
+        osc.frequency.exponentialRampToValueAtTime(145, t + 0.075);
+        gain.gain.setValueAtTime(0.16, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.08);
+        osc.connect(gain);
+        gain.connect(this.compressor);
+        osc.start(t);
+        osc.stop(t + 0.085);
+      }
     } catch {
       // Ignore
     }
@@ -773,3 +684,4 @@ class SoundEngine {
 }
 
 export const soundEngine = new SoundEngine();
+

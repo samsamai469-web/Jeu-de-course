@@ -29,6 +29,7 @@ export interface CarRig {
   headlightBeams: THREE.Mesh[];
   underglowLight: THREE.PointLight;
   underglowMesh: THREE.Mesh;
+  cockpitOccludingMeshes: THREE.Object3D[];
 }
 
 interface StationDims {
@@ -544,7 +545,12 @@ export function buildSportsCarModel(
     clearcoatRoughness: 0.03,
     reflectivity: 1.0,
     transparent: true,
-    opacity: enableSpotlights ? 0.56 : 0.84,
+    opacity:
+      typeof customization.windowTintOpacity === 'number'
+        ? THREE.MathUtils.clamp(customization.windowTintOpacity, 0.22, 0.96)
+        : enableSpotlights
+        ? 0.56
+        : 0.84,
     depthWrite: false,
     envMapIntensity: 2.5,
   });
@@ -761,9 +767,10 @@ export function buildSportsCarModel(
   // ============================================================================
   // PART 2: SCULPTED INTERIOR COCKPIT, DASHBOARD, BUCKET SEATS & STEERING WHEEL
   // ============================================================================
+  const cockpitOccludingMeshes: THREE.Object3D[] = [];
   const steeringWheel = new THREE.Group();
-  steeringWheel.position.set(-0.32, 0.85 * heightScale, -0.20);
-  steeringWheel.rotation.x = -0.26;
+  steeringWheel.position.set(-0.32, 0.78 * heightScale, -0.18);
+  steeringWheel.rotation.x = -0.20;
 
   if (enableSpotlights) {
     const interiorGroup = new THREE.Group();
@@ -779,41 +786,95 @@ export function buildSportsCarModel(
       metalness: 0.05,
     });
 
-    const dashWingGeo = new THREE.CylinderGeometry(0.22, 0.26, 1.32 * widthScale, 12, 1, false, 0, Math.PI);
+    const dashWingGeo = new THREE.CylinderGeometry(0.16, 0.20, 1.32 * widthScale, 12, 1, false, 0, Math.PI);
     dashWingGeo.rotateZ(Math.PI / 2);
-    dashWingGeo.scale(1, 0.58, 1.2);
+    dashWingGeo.scale(1, 0.42, 1.12);
     const dashWing = new THREE.Mesh(dashWingGeo, leatherMat);
-    dashWing.position.set(0, 0.74 * heightScale, -0.54);
+    dashWing.position.set(0, 0.64 * heightScale, -0.56);
     interiorGroup.add(dashWing);
 
-    // Illuminated Digital Instrument Binnacle behind Steering Wheel
-    const binnacleScreen = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.24, 0.09),
-      new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+    // Steering Column Stalk connecting Dashboard to Steering Wheel
+    const columnMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.034, 0.042, 0.28, 10),
+      trimMaterial
     );
-    binnacleScreen.position.set(-0.32, 0.88 * heightScale, -0.44);
-    binnacleScreen.rotation.x = -0.18;
+    columnMesh.rotation.x = Math.PI / 2 - 0.20;
+    columnMesh.position.set(-0.32, 0.75 * heightScale, -0.34);
+    interiorGroup.add(columnMesh);
+
+    // Illuminated Digital Instrument Binnacle behind Steering Wheel
+    const binnacleHood = new THREE.Mesh(
+      new THREE.BoxGeometry(0.26, 0.09, 0.11),
+      leatherMat
+    );
+    binnacleHood.position.set(-0.32, 0.75 * heightScale, -0.47);
+    binnacleHood.rotation.x = -0.15;
+    interiorGroup.add(binnacleHood);
+
+    const binnacleScreen = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.23, 0.075),
+      new THREE.MeshBasicMaterial({ color: 0x0ea5e9 })
+    );
+    binnacleScreen.position.set(-0.32, 0.75 * heightScale, -0.41);
+    binnacleScreen.rotation.x = -0.15;
     interiorGroup.add(binnacleScreen);
 
-    // 3D Sport Steering Wheel with Red 12-o'clock Marker & Aluminum Spokes
-    const wheelRing = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.022, 10, 24), leatherMat);
+    // Center Infotainment Navigation Screen
+    const centerScreenBezel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.24, 0.11, 0.04),
+      trimMaterial
+    );
+    centerScreenBezel.position.set(0.02, 0.74 * heightScale, -0.46);
+    centerScreenBezel.rotation.x = -0.18;
+    centerScreenBezel.rotation.y = -0.12;
+    const centerScreenGlass = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.21, 0.09),
+      new THREE.MeshBasicMaterial({ color: 0x10b981 })
+    );
+    centerScreenGlass.position.set(0.02, 0.74 * heightScale, -0.438);
+    centerScreenGlass.rotation.x = -0.18;
+    centerScreenGlass.rotation.y = -0.12;
+    interiorGroup.add(centerScreenBezel, centerScreenGlass);
+
+    // Interior Top-Center Rearview Mirror Frame (hidden in cockpit POV so it never blocks the road)
+    const interiorMirrorFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.055, 0.024),
+      trimMaterial
+    );
+    interiorMirrorFrame.position.set(0, 1.13 * heightScale, -0.44);
+    interiorMirrorFrame.rotation.y = 0.12;
+    const interiorMirrorGlass = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.20, 0.045),
+      chromeLuxuryMaterial
+    );
+    interiorMirrorGlass.position.set(0, 1.13 * heightScale, -0.426);
+    interiorMirrorGlass.rotation.y = 0.12;
+    interiorGroup.add(interiorMirrorFrame, interiorMirrorGlass);
+    cockpitOccludingMeshes.push(interiorMirrorFrame, interiorMirrorGlass);
+
+    // 3D Sport Steering Wheel with Red 12-o'clock Marker, Aluminum Spokes & Mercedes Star
+    const wheelRing = new THREE.Mesh(new THREE.TorusGeometry(0.138, 0.019, 12, 28), leatherMat);
     const topMarker = new THREE.Mesh(
-      new THREE.TorusGeometry(0.14, 0.024, 8, 8, 0.35),
+      new THREE.TorusGeometry(0.138, 0.021, 8, 8, 0.35),
       caliperMaterial
     );
     topMarker.rotation.z = Math.PI / 2 - 0.175;
-    const wheelHub = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.035, 12), trimMaterial);
+    const wheelHub = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.044, 0.034, 16), trimMaterial);
     wheelHub.rotation.x = Math.PI / 2;
-    const spokeH = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.024, 0.016), rimMaterial);
-    const spokeV = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.12, 0.016), rimMaterial);
+    const wheelStar = createMercedesStar(0.024, chromeLuxuryMaterial);
+    wheelStar.position.z = 0.02;
+    const spokeH = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.022, 0.015), rimMaterial);
+    const spokeV = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.12, 0.015), rimMaterial);
     spokeV.position.y = -0.06;
-    steeringWheel.add(wheelRing, topMarker, wheelHub, spokeH, spokeV);
+    steeringWheel.add(wheelRing, topMarker, wheelHub, wheelStar, spokeH, spokeV);
     interiorGroup.add(steeringWheel);
 
     const seatL = createContouredBucketSeat(leatherMat, redAlcantaraMat, trimMaterial, heightScale);
     seatL.position.x = -0.31;
+    cockpitOccludingMeshes.push(seatL);
     const seatR = createContouredBucketSeat(leatherMat, redAlcantaraMat, trimMaterial, heightScale);
     seatR.position.x = 0.31;
+    cockpitOccludingMeshes.push(seatR);
     interiorGroup.add(seatL, seatR);
     bodyGroup.add(interiorGroup);
   }
@@ -825,6 +886,7 @@ export function buildSportsCarModel(
   const canopyMesh = new THREE.Mesh(canopyGeo, glassMaterial);
   canopyMesh.renderOrder = 2;
   bodyGroup.add(canopyMesh);
+  cockpitOccludingMeshes.push(canopyMesh);
 
   // Flush Body-Colored Roof Panel & A/C-Pillar Rails
   const roofCapGeo = new THREE.BoxGeometry(0.86 * widthScale, 0.038, spec.bodyStyle === 'street' ? 1.18 : 0.96);
@@ -832,6 +894,7 @@ export function buildSportsCarModel(
   roofCapMesh.position.set(0, 1.215 * heightScale, 0.18);
   roofCapMesh.castShadow = true;
   bodyGroup.add(roofCapMesh);
+  cockpitOccludingMeshes.push(roofCapMesh);
 
   // Le Mans Aero Dorsal Fin for Hypercar
   if (spec.bodyStyle === 'hyper') {
@@ -846,6 +909,7 @@ export function buildSportsCarModel(
     const dorsalFin = new THREE.Mesh(finGeo, trimMaterial);
     dorsalFin.position.set(-0.012, 1.04 * heightScale, 0.62);
     bodyGroup.add(dorsalFin);
+    cockpitOccludingMeshes.push(dorsalFin);
   }
 
   // Contoured A-Pillars, B-Pillars & C-Pillars Integrated Flush with Cabin Edges
@@ -884,6 +948,8 @@ export function buildSportsCarModel(
     const chromeRoofLine = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.024, 0.96), chromeLuxuryMaterial);
     chromeRoofLine.position.set(side * 0.44 * widthScale, 1.23 * heightScale, 0.18);
     bodyGroup.add(chromeRoofLine);
+
+    cockpitOccludingMeshes.push(aPillar, bPillar, cPillar, chromeWindowArch, chromeRoofLine);
   }
 
   // Dual Front Windshield Aero Wipers at Base of Cowl
@@ -894,6 +960,7 @@ export function buildSportsCarModel(
     wiper.rotation.y = -0.14;
     wiper.rotation.x = 0.35;
     bodyGroup.add(wiper);
+    cockpitOccludingMeshes.push(wiper);
   }
 
   // ============================================================================
@@ -1245,35 +1312,180 @@ export function buildSportsCarModel(
     tailTrailMeshes.push(trailGroup);
   }
 
-  // Model-Specific Rear Wing / Spoiler Architecture
+  // Model-Specific Rear Wing / Spoiler Architecture + Custom 3D Body Kits
+  const bodyKit = customization.bodyKit || 'stock';
+  const rimStyle = customization.rimStyle || 'amg_multi';
   const wingGroup = new THREE.Group();
-  const wingHeight = spec.bodyStyle === 'street' ? 1.18 : spec.bodyStyle === 'hyper' ? 1.14 : 1.08;
-  const wingSpan = (spec.bodyStyle === 'street' ? 1.42 : 1.88) * widthScale;
 
-  // Main Carbon Airfoil Wing Blade
+  if (bodyKit === 'sport_aero') {
+    // PACK AÉRO SPORT CARBONE:
+    // 1. Extended Front Carbon Splitter Apron + Brushed Aluminum Tie-Rods
+    const sportSplitter = new THREE.Mesh(
+      new THREE.BoxGeometry(1.98 * widthScale, 0.032, 0.46),
+      trimMaterial
+    );
+    sportSplitter.position.set(0, 0.148, -2.31);
+    frontBumper.add(sportSplitter);
+
+    const rodGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.16, 8);
+    for (const side of [-1, 1]) {
+      const rod = new THREE.Mesh(rodGeo, chromeLuxuryMaterial);
+      rod.position.set(side * 0.48 * widthScale, 0.21, -2.36);
+      rod.rotation.x = -0.35;
+      frontBumper.add(rod);
+
+      // Upper Front Dive-Plane Canards
+      const upperCanard = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.022, 0.28), trimMaterial);
+      upperCanard.position.set(side * 0.94 * widthScale, 0.35, -2.08);
+      upperCanard.rotation.z = side * 0.22;
+      upperCanard.rotation.x = 0.28;
+      frontBumper.add(upperCanard);
+
+      // Extended Carbon Side Skirt Blades + Tall Rear Shark Fin Winglet
+      const extSkirt = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.032, 1.96), trimMaterial);
+      extSkirt.position.set(side * 0.99 * widthScale, 0.155, 0.0);
+      bodyGroup.add(extSkirt);
+
+      const tallFin = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.28, 0.32), trimMaterial);
+      tallFin.position.set(side * 1.03 * widthScale, 0.28, 0.86);
+      tallFin.rotation.x = -0.25;
+      bodyGroup.add(tallFin);
+    }
+
+    // Sculpted Carbon Ducktail Lip Spoiler on Rear Decklid
+    const ducktail = new THREE.Mesh(
+      new THREE.BoxGeometry(1.56 * widthScale, 0.09, 0.18),
+      trimMaterial
+    );
+    ducktail.position.set(0, 0.82 * heightScale, 2.18);
+    ducktail.rotation.x = 0.38;
+    wingGroup.add(ducktail);
+  } else if (bodyKit === 'gt3_widebody') {
+    // KIT LARGE GT3 COMPÉTITION (WIDEBODY):
+    // 1. Widebody Flared Front & Rear Overfenders (+8cm per side in Body Color + Carbon Fender Louvers)
+    const wideArchGeo = new THREE.TorusGeometry(0.445, 0.075, 12, 24, Math.PI);
+    const louverVentGeo = new THREE.BoxGeometry(0.14, 0.018, 0.28);
+    for (const [ax, az, isRear] of [
+      [-0.93 * widthScale, -1.35, false],
+      [0.93 * widthScale, -1.35, false],
+      [-0.97 * widthScale, 1.35, true],
+      [0.97 * widthScale, 1.35, true],
+    ] as const) {
+      const sideSign = Math.sign(ax);
+      const flare = new THREE.Mesh(wideArchGeo, bodyMaterial);
+      flare.rotation.y = Math.PI / 2;
+      flare.scale.set(1.12, 1.0, isRear ? 1.45 : 1.32);
+      flare.position.set(ax + sideSign * 0.04, 0.39, az);
+      flare.castShadow = true;
+      bodyGroup.add(flare);
+
+      const archLouvers = new THREE.Mesh(louverVentGeo, trimMaterial);
+      archLouvers.position.set(ax + sideSign * 0.02, 0.74 * heightScale, az - 0.08);
+      archLouvers.rotation.z = -sideSign * 0.25;
+      bodyGroup.add(archLouvers);
+    }
+
+    // 2. Massive Front GT3 Carbon Splitter + Endplate Fences + Tie-Rods
+    const gt3Splitter = new THREE.Mesh(
+      new THREE.BoxGeometry(2.12 * widthScale, 0.038, 0.54),
+      trimMaterial
+    );
+    gt3Splitter.position.set(0, 0.142, -2.35);
+    frontBumper.add(gt3Splitter);
+
+    for (const side of [-1, 1]) {
+      const splitterFence = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.22, 0.44), trimMaterial);
+      splitterFence.position.set(side * 1.04 * widthScale, 0.24, -2.24);
+      frontBumper.add(splitterFence);
+
+      const canardUpper = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.024, 0.32), trimMaterial);
+      canardUpper.position.set(side * 0.96 * widthScale, 0.37, -2.06);
+      canardUpper.rotation.z = side * 0.24;
+      canardUpper.rotation.x = 0.3;
+      frontBumper.add(canardUpper);
+
+      // Widebody Rocker Panel Extensions
+      const wideSkirt = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 1.98), trimMaterial);
+      wideSkirt.position.set(side * 1.02 * widthScale, 0.16, 0.0);
+      bodyGroup.add(wideSkirt);
+
+      const bodySill = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 1.72), bodyMaterial);
+      bodySill.position.set(side * 0.98 * widthScale, 0.25, 0.02);
+      bodyGroup.add(bodySill);
+    }
+
+    // 3. Roof Carbon Air Intake Scoop
+    const roofScoop = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.095, 0.52), trimMaterial);
+    roofScoop.position.set(0, 1.26 * heightScale, 0.05);
+    const roofScoopMouth = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.065, 0.05), grilleDarkMaterial);
+    roofScoopMouth.position.set(0, 1.26 * heightScale, -0.20);
+    bodyGroup.add(roofScoop, roofScoopMouth);
+
+    // 4. Extra Rear Venturi Diffuser Outer Strakes
+    for (const side of [-1, 1]) {
+      const outerDiffFin = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.20, 0.36), trimMaterial);
+      outerDiffFin.position.set(side * 0.78 * widthScale, 0.22, 2.25);
+      rearBumper.add(outerDiffFin);
+    }
+  }
+
+  // Main Carbon Airfoil Wing Blade (Scaled up for GT3 Widebody)
+  const isGt3Kit = bodyKit === 'gt3_widebody';
+  const wingHeight = isGt3Kit
+    ? 1.28
+    : spec.bodyStyle === 'street'
+    ? 1.18
+    : spec.bodyStyle === 'hyper'
+    ? 1.14
+    : 1.08;
+  const wingSpan = (isGt3Kit ? 2.12 : spec.bodyStyle === 'street' ? 1.42 : 1.88) * widthScale;
+
   const wingCurve = new THREE.CatmullRomCurve3([
     new THREE.Vector3(-wingSpan / 2, (wingHeight - 0.02) * heightScale, 2.08),
     new THREE.Vector3(0, wingHeight * heightScale, 1.98),
     new THREE.Vector3(wingSpan / 2, (wingHeight - 0.02) * heightScale, 2.08),
   ]);
-  const wingTubeGeo = new THREE.TubeGeometry(wingCurve, 20, 0.085, 8, false);
-  wingTubeGeo.scale(1, 0.20, 1.45);
+  const wingTubeGeo = new THREE.TubeGeometry(wingCurve, 20, isGt3Kit ? 0.105 : 0.085, 8, false);
+  wingTubeGeo.scale(1, 0.20, isGt3Kit ? 1.75 : 1.45);
   const wingBlade = new THREE.Mesh(
     wingTubeGeo,
-    spec.bodyStyle === 'street' ? bodyMaterial : trimMaterial
+    spec.bodyStyle === 'street' && bodyKit === 'stock' ? bodyMaterial : trimMaterial
   );
   wingBlade.castShadow = true;
   wingGroup.add(wingBlade);
 
+  if (isGt3Kit) {
+    // Upper Dual-ElementDRS Gurney Flap in Body Color
+    const upperFlap = new THREE.Mesh(
+      new THREE.BoxGeometry(wingSpan * 0.96, 0.022, 0.11),
+      bodyMaterial
+    );
+    upperFlap.position.set(0, (wingHeight + 0.04) * heightScale, 2.13);
+    upperFlap.rotation.x = 0.28;
+    wingGroup.add(upperFlap);
+  }
+
   // Vertical Wing Endplates & Swan-Neck Pylons
-  const endplateGeo = new THREE.BoxGeometry(0.024, 0.18, 0.34);
+  const endplateGeo = new THREE.BoxGeometry(
+    0.026,
+    isGt3Kit ? 0.34 : 0.18,
+    isGt3Kit ? 0.48 : 0.34
+  );
   for (const side of [-1, 1]) {
-    const endplate = new THREE.Mesh(endplateGeo, spec.bodyStyle === 'street' ? bodyMaterial : trimMaterial);
+    const endplate = new THREE.Mesh(
+      endplateGeo,
+      isGt3Kit || spec.bodyStyle === 'street' ? bodyMaterial : trimMaterial
+    );
     endplate.position.set(side * (wingSpan / 2), (wingHeight - 0.02) * heightScale, 2.06);
     wingGroup.add(endplate);
 
-    const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.28, 0.14), trimMaterial);
-    pylon.position.set(side * (spec.bodyStyle === 'street' ? 0.48 : 0.34) * widthScale, (wingHeight - 0.13) * heightScale, 1.98);
+    const pylonHeight = isGt3Kit ? 0.42 : 0.28;
+    const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.028, pylonHeight, 0.16), trimMaterial);
+    pylon.position.set(
+      side * (spec.bodyStyle === 'street' ? 0.48 : 0.34) * widthScale,
+      (wingHeight - pylonHeight * 0.48) * heightScale,
+      1.98
+    );
     pylon.rotation.x = -0.24;
     wingGroup.add(pylon);
   }
@@ -1356,7 +1568,7 @@ export function buildSportsCarModel(
   root.add(underglowMesh);
 
   // ============================================================================
-  // PART 9: 4 FORGED MULTI-SPOKE WHEELS, VENTILATED BRAKE DISCS & BREMBO CALIPERS
+  // PART 9: 4 CUSTOMIZABLE 3D RIMS, VENTILATED BRAKE DISCS & BREMBO CALIPERS
   // ============================================================================
   const wheels: THREE.Object3D[] = [];
   const wheelAssemblies: THREE.Group[] = [];
@@ -1375,8 +1587,13 @@ export function buildSportsCarModel(
   const sharedTireGeo = new THREE.LatheGeometry(tirePoints, 24);
   sharedTireGeo.rotateZ(Math.PI / 2);
 
-  // 5 Twin-Spoke (10-spoke) Forged Rim Geometry
-  const spokeGeo = new THREE.BoxGeometry(0.022, 0.50, 0.022);
+  // Shared Geometries for the 4 Rim Styles
+  const twinSpokeGeo = new THREE.BoxGeometry(0.022, 0.50, 0.022);
+  const fiveStarSpokeGeo = new THREE.BoxGeometry(0.034, 0.24, 0.056);
+  const meshForkGeo = new THREE.BoxGeometry(0.020, 0.24, 0.018);
+  const turbineBladeGeo = new THREE.BoxGeometry(0.028, 0.23, 0.036);
+  const rivetGeo = new THREE.SphereGeometry(0.0085, 6, 6);
+
   const rotorGeo = new THREE.CylinderGeometry(0.21, 0.21, 0.026, 20);
   rotorGeo.rotateZ(Math.PI / 2);
   const caliperGeo = new THREE.BoxGeometry(0.065, 0.15, 0.095);
@@ -1386,7 +1603,7 @@ export function buildSportsCarModel(
     const spinGroup = new THREE.Group();
 
     const sideSign = isLeft ? -1 : 1;
-    const tireScaleW = isRear ? 1.22 : 1.08;
+    const tireScaleW = (isRear ? 1.22 : 1.08) * (isGt3Kit ? 1.08 : 1.0);
 
     // 1. Vulcanized Low-Profile Tire
     const tireMesh = new THREE.Mesh(sharedTireGeo, tireMaterial);
@@ -1401,22 +1618,103 @@ export function buildSportsCarModel(
 
     const outerLipGeo = new THREE.TorusGeometry(0.258, 0.018, 8, 24);
     outerLipGeo.rotateY(Math.PI / 2);
-    const outerLipMesh = new THREE.Mesh(outerLipGeo, rimMaterial);
+    const outerLipMesh = new THREE.Mesh(
+      outerLipGeo,
+      rimStyle === 'bbs_mesh' ? chromeLuxuryMaterial : rimMaterial
+    );
     outerLipMesh.position.x = sideSign * 0.142 * tireScaleW;
     spinGroup.add(outerLipMesh);
 
-    // 3. 5 Twin-Spokes (10-Spoke Forged Motorsport Design)
+    // 3. Rim Spokes based on Selected 3D Rim Style (customization.rimStyle)
     const offsetX = sideSign * 0.122 * tireScaleW;
-    for (let s = 0; s < 5; s++) {
-      const baseAngle = (s * Math.PI) / 5;
-      const spokeA = new THREE.Mesh(spokeGeo, rimMaterial);
-      spokeA.position.set(offsetX, 0, 0);
-      spokeA.rotation.x = baseAngle - 0.09;
 
-      const spokeB = new THREE.Mesh(spokeGeo, rimMaterial);
-      spokeB.position.set(offsetX, 0, 0);
-      spokeB.rotation.x = baseAngle + 0.09;
-      spinGroup.add(spokeA, spokeB);
+    if (rimStyle === 'gt_five_spoke') {
+      // ÉTOILE GT 5-BRANCHES CONCAVES
+      for (let s = 0; s < 5; s++) {
+        const angle = (s * Math.PI * 2) / 5;
+        const spoke = new THREE.Mesh(fiveStarSpokeGeo, rimMaterial);
+        const rMid = 0.125;
+        spoke.position.set(
+          offsetX,
+          Math.cos(angle) * rMid,
+          Math.sin(angle) * rMid
+        );
+        spoke.rotation.x = -angle;
+        // Concave inward dish angle
+        spoke.rotation.z = sideSign * 0.08;
+        spinGroup.add(spoke);
+
+        // Dark machined pocket accent on each thick spoke
+        const pocket = new THREE.Mesh(
+          new THREE.BoxGeometry(0.036, 0.15, 0.018),
+          trimMaterial
+        );
+        pocket.position.copy(spoke.position);
+        pocket.rotation.copy(spoke.rotation);
+        spinGroup.add(pocket);
+      }
+    } else if (rimStyle === 'bbs_mesh') {
+      // BBS MOTORSPORT Y-MESH (8 Intersecting Y-Spokes + 16 Chrome Lip Rivets)
+      for (let s = 0; s < 8; s++) {
+        const baseAngle = (s * Math.PI * 2) / 8;
+        for (const forkSign of [-1, 1]) {
+          const spoke = new THREE.Mesh(meshForkGeo, rimMaterial);
+          const rMid = 0.125;
+          const a = baseAngle + forkSign * 0.14;
+          spoke.position.set(
+            offsetX,
+            Math.cos(a) * rMid,
+            Math.sin(a) * rMid
+          );
+          spoke.rotation.x = -(baseAngle + forkSign * 0.34);
+          spinGroup.add(spoke);
+        }
+      }
+      // 16 Polished Chrome Perimeter Rivets
+      for (let r = 0; r < 16; r++) {
+        const ra = (r * Math.PI * 2) / 16;
+        const rivet = new THREE.Mesh(rivetGeo, chromeLuxuryMaterial);
+        rivet.position.set(
+          sideSign * 0.146 * tireScaleW,
+          Math.cos(ra) * 0.238,
+          Math.sin(ra) * 0.238
+        );
+        spinGroup.add(rivet);
+      }
+    } else if (rimStyle === 'aero_turbine') {
+      // AÉRO TURBINE CARBONE (12 Directional Slanted Blades + Outer Carbon Aero Ring)
+      const aeroRingGeo = new THREE.RingGeometry(0.185, 0.252, 24);
+      aeroRingGeo.rotateY(isLeft ? -Math.PI / 2 : Math.PI / 2);
+      const aeroRing = new THREE.Mesh(aeroRingGeo, trimMaterial);
+      aeroRing.position.x = sideSign * 0.136 * tireScaleW;
+      spinGroup.add(aeroRing);
+
+      for (let s = 0; s < 12; s++) {
+        const angle = (s * Math.PI * 2) / 12;
+        const blade = new THREE.Mesh(turbineBladeGeo, rimMaterial);
+        const rMid = 0.128;
+        blade.position.set(
+          offsetX,
+          Math.cos(angle) * rMid,
+          Math.sin(angle) * rMid
+        );
+        blade.rotation.x = -(angle + 0.38);
+        blade.rotation.y = sideSign * 0.28;
+        spinGroup.add(blade);
+      }
+    } else {
+      // DEFAULT: AMG 10-BRANCHES FORGÉES (5 Twin-Spokes)
+      for (let s = 0; s < 5; s++) {
+        const baseAngle = (s * Math.PI) / 5;
+        const spokeA = new THREE.Mesh(twinSpokeGeo, rimMaterial);
+        spokeA.position.set(offsetX, 0, 0);
+        spokeA.rotation.x = baseAngle - 0.09;
+
+        const spokeB = new THREE.Mesh(twinSpokeGeo, rimMaterial);
+        spokeB.position.set(offsetX, 0, 0);
+        spokeB.rotation.x = baseAngle + 0.09;
+        spinGroup.add(spokeA, spokeB);
+      }
     }
 
     // 4. Center Hub & Anodized Racing Center-Lock Nut
@@ -1455,33 +1753,45 @@ export function buildSportsCarModel(
     }
 
     suspensionGroup.add(spinGroup);
-    // Subtle negative racing camber (-2.2 degrees)
-    suspensionGroup.rotation.z = sideSign * 0.038;
+    // Custom Car Parking Multiplayer Camber Angle (0° to -12°)
+    const camberDeg =
+      typeof customization.camberAngleDeg === 'number'
+        ? Math.abs(customization.camberAngleDeg)
+        : isGt3Kit
+        ? 3.2
+        : 2.2;
+    suspensionGroup.rotation.z = sideSign * THREE.MathUtils.degToRad(camberDeg);
     return { suspensionGroup, spinGroup };
   };
 
+  const customWheelOffset = THREE.MathUtils.clamp(customization.wheelOffset ?? 0, -0.02, 0.08);
+  const trackWidthBoost = (isGt3Kit ? 0.055 : 0.0) + customWheelOffset;
+  const rideHeightOffset = THREE.MathUtils.clamp(customization.rideHeight ?? 0, -0.06, 0.06);
+  bodyGroup.position.y = rideHeightOffset;
+  bodyGroup.userData.rideHeightOffset = rideHeightOffset;
+
   const fl = createWheelCorner(true, false);
-  frontLeftPivot.position.set(-0.95 * widthScale, 0.38, -1.35);
+  frontLeftPivot.position.set((-0.95 - trackWidthBoost) * widthScale, 0.38, -1.35);
   frontLeftPivot.add(fl.suspensionGroup);
   root.add(frontLeftPivot);
   wheels.push(fl.spinGroup);
   wheelAssemblies.push(fl.suspensionGroup);
 
   const fr = createWheelCorner(false, false);
-  frontRightPivot.position.set(0.95 * widthScale, 0.38, -1.35);
+  frontRightPivot.position.set((0.95 + trackWidthBoost) * widthScale, 0.38, -1.35);
   frontRightPivot.add(fr.suspensionGroup);
   root.add(frontRightPivot);
   wheels.push(fr.spinGroup);
   wheelAssemblies.push(fr.suspensionGroup);
 
   const rl = createWheelCorner(true, true);
-  rl.suspensionGroup.position.set(-0.98 * widthScale, 0.38, 1.35);
+  rl.suspensionGroup.position.set((-0.98 - trackWidthBoost) * widthScale, 0.38, 1.35);
   root.add(rl.suspensionGroup);
   wheels.push(rl.spinGroup);
   wheelAssemblies.push(rl.suspensionGroup);
 
   const rr = createWheelCorner(false, true);
-  rr.suspensionGroup.position.set(0.98 * widthScale, 0.38, 1.35);
+  rr.suspensionGroup.position.set((0.98 + trackWidthBoost) * widthScale, 0.38, 1.35);
   root.add(rr.suspensionGroup);
   wheels.push(rr.spinGroup);
   wheelAssemblies.push(rr.suspensionGroup);
@@ -1514,6 +1824,7 @@ export function buildSportsCarModel(
     headlightBeams,
     underglowLight,
     underglowMesh,
+    cockpitOccludingMeshes,
   };
 }
 
